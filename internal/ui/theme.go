@@ -33,7 +33,7 @@ func (t *FluentTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
 func (t *FluentTheme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
 	case theme.SizeNamePadding:
-		return 8
+		return 10
 	case theme.SizeNameText:
 		return 14
 	case theme.SizeNameHeadingText:
@@ -91,42 +91,42 @@ func hexColor(r, g, b uint8) color.Color {
 
 func BackgroundColor(dark bool) color.Color {
 	if dark {
-		return hexColor(0x1F, 0x1F, 0x1F)
+		return hexColor(0x11, 0x18, 0x27)
 	}
-	return hexColor(0xF3, 0xF3, 0xF3)
+	return hexColor(0xF7, 0xF8, 0xFA)
 }
 
 func CardColor(dark bool) color.Color {
 	if dark {
-		return hexColor(0x2B, 0x2B, 0x2B)
+		return hexColor(0x1F, 0x29, 0x37)
 	}
 	return hexColor(0xFF, 0xFF, 0xFF)
 }
 
 func AccentColor(dark bool) color.Color {
 	if dark {
-		return hexColor(0x60, 0xCD, 0xFF)
+		return hexColor(0x38, 0xBD, 0xF8)
 	}
-	return hexColor(0x00, 0x78, 0xD4)
+	return hexColor(0x25, 0x63, 0xEB)
 }
 
 func TextColor(dark bool) color.Color {
 	if dark {
-		return hexColor(0xFF, 0xFF, 0xFF)
+		return hexColor(0xF9, 0xFA, 0xFB)
 	}
-	return hexColor(0x1A, 0x1A, 0x1A)
+	return hexColor(0x11, 0x18, 0x27)
 }
 
 func MutedTextColor(dark bool) color.Color {
 	if dark {
-		return hexColor(0x9F, 0xA7, 0xAE)
+		return hexColor(0x9C, 0xA3, 0xAF)
 	}
 	return hexColor(0x6B, 0x72, 0x80)
 }
 
 func SelectionColor(dark bool) color.Color {
 	if dark {
-		return hexColor(0x32, 0x4D, 0x5D)
+		return hexColor(0x1E, 0x3A, 0x8A)
 	}
-	return hexColor(0xD8, 0xEA, 0xF8)
+	return hexColor(0xDB, 0xEA, 0xFE)
 }

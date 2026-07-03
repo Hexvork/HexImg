@@ -16,7 +16,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
@@ -80,10 +79,12 @@ func main() {
 	logOutput.SetMinRowsVisible(5)
 	logOutput.Disable()
 
-	formatSelect := widget.NewSelect([]string{"jpg", "png", "webp", "bmp", "tiff"}, nil)
+	formatSelect := widget.NewRadioGroup([]string{"jpg", "png", "webp", "bmp", "tiff"}, nil)
+	formatSelect.Horizontal = true
 	formatSelect.SetSelected("jpg")
 
-	outputModeSelect := widget.NewSelect([]string{outputModeSuffix, outputModeFolder, outputModeReplace}, nil)
+	outputModeSelect := widget.NewRadioGroup([]string{outputModeSuffix, outputModeFolder, outputModeReplace}, nil)
+	outputModeSelect.Horizontal = true
 	outputModeSelect.SetSelected(outputModeSuffix)
 
 	suffixEntry := widget.NewEntry()
@@ -178,7 +179,7 @@ func main() {
 		refreshOutput()
 	}
 
-	openInputButton := fixedButton("选择图片", icon(fas.FolderOpen), func() {
+	openInputButton := widget.NewButtonWithIcon("选择图片", icon(fas.FolderOpen), func() {
 		chooseImageFile(win, func(path string, err error) {
 			if err != nil {
 				dialog.ShowError(err, win)
@@ -198,7 +199,6 @@ func main() {
 
 	convertButton := widget.NewButtonWithIcon("转换", icon(fas.Play), nil)
 	convertButton.Importance = widget.HighImportance
-	convertButtonContainer := fixedButtonObject(convertButton)
 
 	cancelButton := widget.NewButtonWithIcon("停止", icon(fas.Stop), func() {
 		cancelMu.Lock()
@@ -209,7 +209,6 @@ func main() {
 		}
 	})
 	cancelButton.Disable()
-	cancelButtonContainer := fixedButtonObject(cancelButton)
 
 	convertButton.OnTapped = func() {
 		current := cfg()
@@ -286,13 +285,10 @@ func main() {
 		}()
 	}
 
-	title := canvas.NewText("HexImg", ui.TextColor(darkMode))
-	title.TextSize = 28
-	title.TextStyle = fyne.TextStyle{Bold: true}
-	subtitle := canvas.NewText(fmt.Sprintf("图片格式转换 · FFmpeg · %s · %s/%s", version, runtime.GOOS, runtime.GOARCH), ui.MutedTextColor(darkMode))
-	subtitle.TextSize = 13
+	title := widget.NewLabelWithStyle("HexImg", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	subtitle := widget.NewLabel(fmt.Sprintf("图片格式转换 · FFmpeg · %s · %s/%s", version, runtime.GOOS, runtime.GOARCH))
+	subtitle.Importance = widget.LowImportance
 
-	var refreshCustomTheme func()
 	var themeButton *widget.Button
 	themeButton = widget.NewButtonWithIcon("", icon(fas.Sun), func() {
 		darkMode = !darkMode
@@ -303,18 +299,18 @@ func main() {
 			themeButton.Icon = icon(fas.Moon)
 		}
 		themeButton.Refresh()
-		refreshCustomTheme()
 	})
+	themeButton.Importance = widget.LowImportance
 
-	header := container.NewBorder(nil, nil, nil, fixedIconButton(themeButton), container.NewVBox(title, subtitle))
-	sourceCard, refreshSourceCard := fluentCard("图片", container.NewVBox(
+	header := container.NewBorder(nil, nil, nil, themeButton, container.NewVBox(title, subtitle))
+	sourceCard := widget.NewCard("图片", "", container.NewVBox(
 		widget.NewLabel("输入图片"),
 		container.NewBorder(nil, nil, nil, openInputButton, selectedPath),
 		widget.NewLabel("输出文件"),
 		outputPath,
-	), darkMode)
+	))
 
-	settingsCard, refreshSettingsCard := fluentCard("转换设置", container.NewVBox(
+	settingsCard := widget.NewCard("转换设置", "", container.NewVBox(
 		widget.NewLabel("目标格式"),
 		formatSelect,
 		container.NewBorder(nil, nil, qualityLabel, qualityValue, qualitySlider),
@@ -322,63 +318,25 @@ func main() {
 		outputModeSelect,
 		container.NewBorder(nil, nil, widget.NewLabel("后缀"), nil, suffixEntry),
 		container.NewBorder(nil, nil, widget.NewLabel("文件夹"), nil, folderEntry),
-	), darkMode)
+	))
 
-	logCard, refreshLogCard := fluentCard("状态", container.NewVBox(statusLabel, logOutput), darkMode)
-	actionBar := container.NewBorder(nil, nil, nil, container.NewHBox(cancelButtonContainer, convertButtonContainer), nil)
-
-	refreshCustomTheme = func() {
-		title.Color = ui.TextColor(darkMode)
-		subtitle.Color = ui.MutedTextColor(darkMode)
-		title.Refresh()
-		subtitle.Refresh()
-		refreshSourceCard(darkMode)
-		refreshSettingsCard(darkMode)
-		refreshLogCard(darkMode)
-	}
+	logCard := widget.NewCard("状态", "", container.NewVBox(statusLabel, logOutput))
+	actionBar := container.NewPadded(container.NewHBox(cancelButton, convertButton))
+	mainContent := container.NewVScroll(container.NewPadded(container.NewVBox(sourceCard, settingsCard, logCard)))
+	mainContent.SetMinSize(fyne.NewSize(720, 360))
 
 	content := container.NewBorder(
-		header,
+		container.NewPadded(header),
 		actionBar,
 		nil,
 		nil,
-		container.NewPadded(container.NewVBox(sourceCard, settingsCard, logCard)),
+		mainContent,
 	)
 	win.SetContent(content)
 	refreshOutput()
 	refreshQualityControl(formatSelect.Selected)
 	refreshOutputMode(outputModeSelect.Selected)
 	win.ShowAndRun()
-}
-
-func fixedButton(text string, iconResource fyne.Resource, tapped func()) fyne.CanvasObject {
-	return fixedButtonObject(widget.NewButtonWithIcon(text, iconResource, tapped))
-}
-
-func fixedButtonObject(button *widget.Button) fyne.CanvasObject {
-	return container.NewGridWrap(fyne.NewSize(128, 40), button)
-}
-
-func fixedIconButton(button *widget.Button) fyne.CanvasObject {
-	return container.NewGridWrap(fyne.NewSize(40, 40), button)
-}
-
-func fluentCard(titleText string, content fyne.CanvasObject, darkMode bool) (fyne.CanvasObject, func(bool)) {
-	title := canvas.NewText(titleText, ui.TextColor(darkMode))
-	title.TextStyle = fyne.TextStyle{Bold: true}
-	title.TextSize = 18
-
-	body := container.NewVBox(title, widget.NewSeparator(), content)
-	bg := canvas.NewRectangle(ui.CardColor(darkMode))
-	bg.CornerRadius = 8
-	card := container.NewStack(bg, container.NewPadded(body))
-	refresh := func(dark bool) {
-		title.Color = ui.TextColor(dark)
-		bg.FillColor = ui.CardColor(dark)
-		title.Refresh()
-		bg.Refresh()
-	}
-	return card, refresh
 }
 
 func icon(resource fyne.Resource) fyne.Resource {
