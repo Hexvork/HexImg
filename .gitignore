@@ -1,0 +1,18 @@
+bin/
+dist/
+build/
+.cache/
+*.exe
+*.log
+*.test
+coverage.out
+
+# Go workspace/cache files
+go.work
+go.work.sum
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
