@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"image/color"
 
 	"fyne.io/fyne/v2"
@@ -118,13 +117,6 @@ func TextColor(dark bool) color.Color {
 	return hexColor(0x1A, 0x1A, 0x1A)
 }
 
-func InvertedTextColor(dark bool) color.Color {
-	if dark {
-		return hexColor(0x1A, 0x1A, 0x1A)
-	}
-	return hexColor(0xFF, 0xFF, 0xFF)
-}
-
 func MutedTextColor(dark bool) color.Color {
 	if dark {
 		return hexColor(0x9F, 0xA7, 0xAE)
@@ -132,28 +124,9 @@ func MutedTextColor(dark bool) color.Color {
 	return hexColor(0x6B, 0x72, 0x80)
 }
 
-func AccentTextColor(dark bool) color.Color {
-	if dark {
-		return hexColor(0x1A, 0x1A, 0x1A)
-	}
-	return hexColor(0xFF, 0xFF, 0xFF)
-}
-
-func ButtonColor(dark bool) color.Color {
-	if dark {
-		return hexColor(0x2F, 0x2F, 0x2F)
-	}
-	return hexColor(0xFF, 0xFF, 0xFF)
-}
-
 func SelectionColor(dark bool) color.Color {
 	if dark {
 		return hexColor(0x32, 0x4D, 0x5D)
 	}
 	return hexColor(0xD8, 0xEA, 0xF8)
-}
-
-func ColorHex(c color.Color) string {
-	r, g, b, _ := c.RGBA()
-	return fmt.Sprintf("#%02X%02X%02X", uint8(r>>8), uint8(g>>8), uint8(b>>8))
 }

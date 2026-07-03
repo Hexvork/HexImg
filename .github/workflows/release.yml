@@ -16,7 +16,7 @@ permissions:
 
 env:
   APP_NAME: HexImg
-  GO_VERSION: "1.24.x"
+  GO_VERSION: "1.24"
 
 jobs:
   build:
@@ -145,6 +145,8 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          bundle_version="${{ steps.version.outputs.value }}"
+          bundle_version="${bundle_version#v}"
           app_dir="dist/${APP_NAME}.app"
           mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
           cp "dist/${APP_NAME}-${{ matrix.name }}" "$app_dir/Contents/MacOS/${APP_NAME}"
@@ -158,8 +160,8 @@ jobs:
             <key>CFBundleIdentifier</key><string>com.hexvork.heximg</string>
             <key>CFBundleName</key><string>${APP_NAME}</string>
             <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
-            <key>CFBundleVersion</key><string>${{ steps.version.outputs.value }}</string>
-            <key>CFBundleShortVersionString</key><string>${{ steps.version.outputs.value }}</string>
+            <key>CFBundleVersion</key><string>${bundle_version}</string>
+            <key>CFBundleShortVersionString</key><string>${bundle_version}</string>
             <key>LSMinimumSystemVersion</key><string>11.0</string>
             <key>NSHighResolutionCapable</key><true/>
           </dict>

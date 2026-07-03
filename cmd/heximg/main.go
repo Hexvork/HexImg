@@ -64,6 +64,7 @@ func main() {
 	formatSelect := widget.NewSelect([]string{"jpg", "png", "webp", "bmp", "tiff"}, nil)
 	formatSelect.SetSelected("jpg")
 
+	qualityLabel := widget.NewLabel("质量")
 	qualityValue := widget.NewLabel("85")
 	qualitySlider := widget.NewSlider(0, 100)
 	qualitySlider.Step = 1
@@ -87,7 +88,37 @@ func main() {
 		outputPath.SetText(cfg().output)
 	}
 
-	formatSelect.OnChanged = func(string) {
+	lastFormat := formatSelect.Selected
+	lastLossyQuality := 85.0
+	lastPngCompression := 6.0
+	refreshQualityControl := func(format string) {
+		if format == "png" {
+			qualityLabel.SetText("压缩级别")
+			qualitySlider.Min = 0
+			qualitySlider.Max = 9
+			qualitySlider.Step = 1
+			qualitySlider.Value = lastPngCompression
+		} else {
+			qualityLabel.SetText("质量")
+			qualitySlider.Min = 0
+			qualitySlider.Max = 100
+			qualitySlider.Step = 1
+			qualitySlider.Value = lastLossyQuality
+		}
+		qualityValue.SetText(strconv.Itoa(int(qualitySlider.Value)))
+		qualityLabel.Refresh()
+		qualitySlider.Refresh()
+		qualityValue.Refresh()
+	}
+
+	formatSelect.OnChanged = func(format string) {
+		if lastFormat == "png" {
+			lastPngCompression = qualitySlider.Value
+		} else {
+			lastLossyQuality = qualitySlider.Value
+		}
+		refreshQualityControl(format)
+		lastFormat = format
 		refreshOutput()
 	}
 
@@ -175,6 +206,13 @@ func main() {
 		}()
 	}
 
+	title := canvas.NewText("HexImg", ui.TextColor(darkMode))
+	title.TextSize = 28
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	subtitle := canvas.NewText(fmt.Sprintf("图片格式转换 · FFmpeg · %s · %s/%s", version, runtime.GOOS, runtime.GOARCH), ui.MutedTextColor(darkMode))
+	subtitle.TextSize = 13
+
+	var refreshCustomTheme func()
 	var themeButton *widget.Button
 	themeButton = widget.NewButtonWithIcon("", icon(fas.Sun), func() {
 		darkMode = !darkMode
@@ -185,30 +223,35 @@ func main() {
 			themeButton.Icon = icon(fas.Moon)
 		}
 		themeButton.Refresh()
+		refreshCustomTheme()
 	})
 
-	title := canvas.NewText("HexImg", ui.TextColor(true))
-	title.TextSize = 28
-	title.TextStyle = fyne.TextStyle{Bold: true}
-	subtitle := canvas.NewText(fmt.Sprintf("图片格式转换 · FFmpeg · %s · %s/%s", version, runtime.GOOS, runtime.GOARCH), ui.MutedTextColor(true))
-	subtitle.TextSize = 13
-
 	header := container.NewBorder(nil, nil, nil, fixedIconButton(themeButton), container.NewVBox(title, subtitle))
-	sourceCard := fluentCard("图片", container.NewVBox(
+	sourceCard, refreshSourceCard := fluentCard("图片", container.NewVBox(
 		widget.NewLabel("输入图片"),
 		container.NewBorder(nil, nil, nil, openInputButton, selectedPath),
 		widget.NewLabel("输出文件"),
 		outputPath,
-	))
+	), darkMode)
 
-	settingsCard := fluentCard("转换设置", container.NewVBox(
+	settingsCard, refreshSettingsCard := fluentCard("转换设置", container.NewVBox(
 		widget.NewLabel("目标格式"),
 		formatSelect,
-		container.NewBorder(nil, nil, widget.NewLabel("质量"), qualityValue, qualitySlider),
-	))
+		container.NewBorder(nil, nil, qualityLabel, qualityValue, qualitySlider),
+	), darkMode)
 
-	logCard := fluentCard("状态", container.NewVBox(statusLabel, logOutput))
+	logCard, refreshLogCard := fluentCard("状态", container.NewVBox(statusLabel, logOutput), darkMode)
 	actionBar := container.NewBorder(nil, nil, nil, container.NewHBox(cancelButtonContainer, convertButtonContainer), nil)
+
+	refreshCustomTheme = func() {
+		title.Color = ui.TextColor(darkMode)
+		subtitle.Color = ui.MutedTextColor(darkMode)
+		title.Refresh()
+		subtitle.Refresh()
+		refreshSourceCard(darkMode)
+		refreshSettingsCard(darkMode)
+		refreshLogCard(darkMode)
+	}
 
 	content := container.NewBorder(
 		header,
@@ -219,6 +262,7 @@ func main() {
 	)
 	win.SetContent(content)
 	refreshOutput()
+	refreshQualityControl(formatSelect.Selected)
 	win.ShowAndRun()
 }
 
@@ -234,15 +278,22 @@ func fixedIconButton(button *widget.Button) fyne.CanvasObject {
 	return container.NewGridWrap(fyne.NewSize(40, 40), button)
 }
 
-func fluentCard(titleText string, content fyne.CanvasObject) fyne.CanvasObject {
-	title := canvas.NewText(titleText, ui.TextColor(true))
+func fluentCard(titleText string, content fyne.CanvasObject, darkMode bool) (fyne.CanvasObject, func(bool)) {
+	title := canvas.NewText(titleText, ui.TextColor(darkMode))
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	title.TextSize = 18
 
 	body := container.NewVBox(title, widget.NewSeparator(), content)
-	bg := canvas.NewRectangle(ui.CardColor(true))
+	bg := canvas.NewRectangle(ui.CardColor(darkMode))
 	bg.CornerRadius = 8
-	return container.NewStack(bg, container.NewPadded(body))
+	card := container.NewStack(bg, container.NewPadded(body))
+	refresh := func(dark bool) {
+		title.Color = ui.TextColor(dark)
+		bg.FillColor = ui.CardColor(dark)
+		title.Refresh()
+		bg.Refresh()
+	}
+	return card, refresh
 }
 
 func icon(resource fyne.Resource) fyne.Resource {
@@ -269,7 +320,7 @@ func buildFFmpegArgs(cfg convertConfig) []string {
 	case "webp":
 		args = append(args, "-frames:v", "1", "-compression_level", "6", "-quality", strconv.Itoa(cfg.quality))
 	case "png":
-		args = append(args, "-frames:v", "1", "-compression_level", strconv.Itoa(pngCompression(cfg.quality)))
+		args = append(args, "-frames:v", "1", "-compression_level", strconv.Itoa(pngCompressionLevel(cfg.quality)))
 	case "bmp", "tiff":
 		args = append(args, "-frames:v", "1")
 	default:
@@ -284,9 +335,14 @@ func jpegQScale(quality int) int {
 	return 31 - int(float64(quality)*29.0/100.0)
 }
 
-func pngCompression(quality int) int {
-	quality = clampQuality(quality)
-	return 9 - int(float64(quality)*9.0/100.0)
+func pngCompressionLevel(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > 9 {
+		return 9
+	}
+	return value
 }
 
 func clampQuality(value int) int {
@@ -319,19 +375,27 @@ func runFFmpeg(ctx context.Context, args []string, appendLine func(string)) erro
 	}
 
 	var wg sync.WaitGroup
-	readPipe := func(reader io.Reader) {
+	readPipe := func(reader io.Reader) error {
 		defer wg.Done()
 		scanner := bufio.NewScanner(reader)
 		for scanner.Scan() {
 			appendLine(scanner.Text())
 		}
+		return scanner.Err()
 	}
 	wg.Add(2)
-	go readPipe(stdout)
-	go readPipe(stderr)
+	errs := make(chan error, 2)
+	go func() { errs <- readPipe(stdout) }()
+	go func() { errs <- readPipe(stderr) }()
 
 	waitErr := cmd.Wait()
 	wg.Wait()
+	close(errs)
+	for scanErr := range errs {
+		if scanErr != nil && waitErr == nil {
+			return scanErr
+		}
+	}
 	return waitErr
 }
 
@@ -339,8 +403,9 @@ func appendLog(logOutput *widget.Entry, line string) {
 	fyne.Do(func() {
 		const maxLogLength = 24000
 		current := logOutput.Text
-		if len(current) > maxLogLength {
-			current = current[len(current)-maxLogLength:]
+		runes := []rune(current)
+		if len(runes) > maxLogLength {
+			current = string(runes[len(runes)-maxLogLength:])
 		}
 		logOutput.SetText(current + line + "\n")
 	})
