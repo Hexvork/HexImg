@@ -109,8 +109,9 @@ jobs:
       - name: Download modules
         run: go mod download
 
-      - name: Build binary
-        shell: bash
+      - name: Build Windows binary
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
         env:
           CGO_ENABLED: "1"
           GOOS: ${{ matrix.goos }}
@@ -120,21 +121,24 @@ jobs:
         run: |
           mkdir -p dist
 
-          ldflags="-s -w -X main.version=${{ steps.version.outputs.value }}"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            ldflags="-s -w -H=windowsgui -X main.version=${{ steps.version.outputs.value }}"
-          fi
-
-          # Windows ARM64 must use MSYS2 CLANGARM64 clang instead of system LLVM
-          # clang, because Go passes MinGW-style linker flags.
           if [ "${{ matrix.name }}" = "windows-arm64" ]; then
-            export MINGW_PREFIX="C:/msys64/clangarm64"
-            export PATH="${MINGW_PREFIX}/bin:${PATH}"
-            export CC="${MINGW_PREFIX}/bin/clang.exe"
             export CGO_LDFLAGS="-L${MINGW_PREFIX}/lib"
           fi
 
-          go build -buildvcs=false -trimpath -ldflags "$ldflags" -o "dist/${APP_NAME}-${{ matrix.name }}${{ matrix.artifact_ext }}" ./cmd/heximg
+          go build -buildvcs=false -trimpath -ldflags "-s -w -H=windowsgui -X main.version=${{ steps.version.outputs.value }}" -o "dist/${APP_NAME}-${{ matrix.name }}${{ matrix.artifact_ext }}" ./cmd/heximg
+
+      - name: Build binary
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
+          CGO_CFLAGS: ${{ matrix.cgo_cflags }}
+        run: |
+          mkdir -p dist
+          go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=${{ steps.version.outputs.value }}" -o "dist/${APP_NAME}-${{ matrix.name }}${{ matrix.artifact_ext }}" ./cmd/heximg
 
       - name: Package Windows installer
         if: runner.os == 'Windows'
