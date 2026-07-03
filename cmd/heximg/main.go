@@ -29,11 +29,27 @@ import (
 var version = "dev"
 
 type convertConfig struct {
-	input   string
-	output  string
-	format  string
-	quality int
+	input         string
+	output        string
+	format        string
+	quality       int
+	replaceSource bool
+	workOutput    string
 }
+
+type outputSettings struct {
+	mode       string
+	suffix     string
+	folderName string
+}
+
+const (
+	outputModeSuffix  = "添加后缀"
+	outputModeFolder  = "当前目录文件夹"
+	outputModeReplace = "替换源文件"
+	defaultSuffix     = "_HexImg"
+	defaultFolderName = "HexImg"
+)
 
 func main() {
 	hex := app.NewWithID("com.hexvork.heximg")
@@ -64,6 +80,16 @@ func main() {
 	formatSelect := widget.NewSelect([]string{"jpg", "png", "webp", "bmp", "tiff"}, nil)
 	formatSelect.SetSelected("jpg")
 
+	outputModeSelect := widget.NewSelect([]string{outputModeSuffix, outputModeFolder, outputModeReplace}, nil)
+	outputModeSelect.SetSelected(outputModeSuffix)
+
+	suffixEntry := widget.NewEntry()
+	suffixEntry.SetText(defaultSuffix)
+
+	folderEntry := widget.NewEntry()
+	folderEntry.SetText(defaultFolderName)
+	folderEntry.Disable()
+
 	qualityLabel := widget.NewLabel("质量")
 	qualityValue := widget.NewLabel("85")
 	qualitySlider := widget.NewSlider(0, 100)
@@ -76,11 +102,18 @@ func main() {
 	cfg := func() convertConfig {
 		input := strings.TrimSpace(selectedPath.Text)
 		format := formatSelect.Selected
+		settings := outputSettings{
+			mode:       outputModeSelect.Selected,
+			suffix:     strings.TrimSpace(suffixEntry.Text),
+			folderName: strings.TrimSpace(folderEntry.Text),
+		}
+		output, replaceSource := outputFor(input, format, settings)
 		return convertConfig{
-			input:   input,
-			output:  outputFor(input, format),
-			format:  format,
-			quality: int(qualitySlider.Value),
+			input:         input,
+			output:        output,
+			format:        format,
+			quality:       int(qualitySlider.Value),
+			replaceSource: replaceSource,
 		}
 	}
 
@@ -119,6 +152,26 @@ func main() {
 		}
 		refreshQualityControl(format)
 		lastFormat = format
+		refreshOutput()
+	}
+
+	refreshOutputMode := func(mode string) {
+		suffixEntry.Disable()
+		folderEntry.Disable()
+		switch mode {
+		case outputModeFolder:
+			folderEntry.Enable()
+		case outputModeReplace:
+		default:
+			suffixEntry.Enable()
+		}
+		refreshOutput()
+	}
+	outputModeSelect.OnChanged = refreshOutputMode
+	suffixEntry.OnChanged = func(string) {
+		refreshOutput()
+	}
+	folderEntry.OnChanged = func(string) {
 		refreshOutput()
 	}
 
@@ -169,6 +222,13 @@ func main() {
 			return
 		}
 
+		workOutput, cleanup, err := prepareOutput(current)
+		if err != nil {
+			dialog.ShowError(err, win)
+			return
+		}
+		current.workOutput = workOutput
+
 		args := buildFFmpegArgs(current)
 		logOutput.SetText("")
 		statusLabel.SetText("正在转换...")
@@ -181,6 +241,8 @@ func main() {
 		cancelMu.Unlock()
 
 		go func() {
+			defer cleanup()
+
 			err := runFFmpeg(ctx, args, func(line string) {
 				appendLog(logOutput, line)
 			})
@@ -200,6 +262,10 @@ func main() {
 			}
 			if err != nil {
 				setStatus(statusLabel, "转换失败："+err.Error())
+				return
+			}
+			if err := finalizeOutput(current); err != nil {
+				setStatus(statusLabel, "保存失败："+err.Error())
 				return
 			}
 			setStatus(statusLabel, "转换完成："+filepath.Base(current.output))
@@ -238,6 +304,10 @@ func main() {
 		widget.NewLabel("目标格式"),
 		formatSelect,
 		container.NewBorder(nil, nil, qualityLabel, qualityValue, qualitySlider),
+		widget.NewLabel("输出方式"),
+		outputModeSelect,
+		container.NewBorder(nil, nil, widget.NewLabel("后缀"), nil, suffixEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("文件夹"), nil, folderEntry),
 	), darkMode)
 
 	logCard, refreshLogCard := fluentCard("状态", container.NewVBox(statusLabel, logOutput), darkMode)
@@ -263,6 +333,7 @@ func main() {
 	win.SetContent(content)
 	refreshOutput()
 	refreshQualityControl(formatSelect.Selected)
+	refreshOutputMode(outputModeSelect.Selected)
 	win.ShowAndRun()
 }
 
@@ -300,15 +371,30 @@ func icon(resource fyne.Resource) fyne.Resource {
 	return theme.NewThemedResource(resource)
 }
 
-func outputFor(inputPath, format string) string {
+func outputFor(inputPath, format string, settings outputSettings) (string, bool) {
 	if inputPath == "" {
-		return ""
+		return "", false
 	}
 	if format == "" {
 		format = "jpg"
 	}
-	base := strings.TrimSuffix(inputPath, filepath.Ext(inputPath))
-	return base + "_converted." + format
+	ext := filepath.Ext(inputPath)
+	base := strings.TrimSuffix(filepath.Base(inputPath), ext)
+	dir := filepath.Dir(inputPath)
+
+	switch settings.mode {
+	case outputModeFolder:
+		folderName := sanitizePathPart(settings.folderName, defaultFolderName)
+		return filepath.Join(dir, folderName, base+"."+format), false
+	case outputModeReplace:
+		return filepath.Join(dir, base+"."+format), true
+	default:
+		suffix := settings.suffix
+		if suffix == "" {
+			suffix = defaultSuffix
+		}
+		return filepath.Join(dir, base+suffix+"."+format), false
+	}
 }
 
 func buildFFmpegArgs(cfg convertConfig) []string {
@@ -327,7 +413,82 @@ func buildFFmpegArgs(cfg convertConfig) []string {
 		args = append(args, "-frames:v", "1")
 	}
 
-	return append(args, cfg.output)
+	output := cfg.output
+	if cfg.workOutput != "" {
+		output = cfg.workOutput
+	}
+	return append(args, output)
+}
+
+func prepareOutput(cfg convertConfig) (string, func(), error) {
+	if cfg.output == "" {
+		return "", func() {}, errors.New("输出路径不可用")
+	}
+	outputDir := filepath.Dir(cfg.output)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", func() {}, fmt.Errorf("创建输出目录失败：%w", err)
+	}
+	if !cfg.replaceSource {
+		return cfg.output, func() {}, nil
+	}
+
+	temp, err := os.CreateTemp(outputDir, ".heximg-*."+cfg.format)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("创建临时输出文件失败：%w", err)
+	}
+	workOutput := temp.Name()
+	if err := temp.Close(); err != nil {
+		_ = os.Remove(workOutput)
+		return "", func() {}, fmt.Errorf("关闭临时输出文件失败：%w", err)
+	}
+	cleanup := func() {
+		_ = os.Remove(workOutput)
+	}
+	return workOutput, cleanup, nil
+}
+
+func finalizeOutput(cfg convertConfig) error {
+	if !cfg.replaceSource {
+		return nil
+	}
+	if cfg.workOutput == "" {
+		return errors.New("临时输出路径不可用")
+	}
+	if samePath(cfg.input, cfg.output) {
+		if err := os.Rename(cfg.workOutput, cfg.output); err == nil {
+			return nil
+		}
+		if err := os.Remove(cfg.output); err != nil {
+			return fmt.Errorf("删除源文件失败：%w", err)
+		}
+		return os.Rename(cfg.workOutput, cfg.output)
+	}
+	if err := os.Rename(cfg.workOutput, cfg.output); err != nil {
+		return fmt.Errorf("保存替换文件失败：%w", err)
+	}
+	if err := os.Remove(cfg.input); err != nil {
+		return fmt.Errorf("删除源文件失败：%w", err)
+	}
+	return nil
+}
+
+func sanitizePathPart(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	replacer := strings.NewReplacer("\\", "_", "/", "_", ":", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_")
+	return replacer.Replace(value)
+}
+
+func samePath(left, right string) bool {
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	if leftErr == nil && rightErr == nil {
+		left = leftAbs
+		right = rightAbs
+	}
+	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
 }
 
 func jpegQScale(quality int) int {

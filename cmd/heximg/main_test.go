@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -61,10 +62,11 @@ func TestPngCompressionLevel(t *testing.T) {
 
 func TestBuildFFmpegArgsForPNGUsesCompressionLevel(t *testing.T) {
 	got := buildFFmpegArgs(convertConfig{
-		input:   "input.png",
-		output:  "output.png",
-		format:  "png",
-		quality: 6,
+		input:      "input.png",
+		output:     "final.png",
+		workOutput: "output.png",
+		format:     "png",
+		quality:    6,
 	})
 	want := []string{
 		"-hide_banner",
@@ -80,5 +82,40 @@ func TestBuildFFmpegArgsForPNGUsesCompressionLevel(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("buildFFmpegArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestOutputForSuffixMode(t *testing.T) {
+	got, replace := outputFor(filepath.Join("images", "photo.png"), "jpg", outputSettings{
+		mode:   outputModeSuffix,
+		suffix: defaultSuffix,
+	})
+	want := filepath.Join("images", "photo_HexImg.jpg")
+
+	if got != want || replace {
+		t.Fatalf("outputFor() = %q, %v, want %q, false", got, replace, want)
+	}
+}
+
+func TestOutputForFolderModeSanitizesFolderName(t *testing.T) {
+	got, replace := outputFor(filepath.Join("images", "photo.png"), "webp", outputSettings{
+		mode:       outputModeFolder,
+		folderName: `Hex:Img`,
+	})
+	want := filepath.Join("images", "Hex_Img", "photo.webp")
+
+	if got != want || replace {
+		t.Fatalf("outputFor() = %q, %v, want %q, false", got, replace, want)
+	}
+}
+
+func TestOutputForReplaceMode(t *testing.T) {
+	got, replace := outputFor(filepath.Join("images", "photo.png"), "png", outputSettings{
+		mode: outputModeReplace,
+	})
+	want := filepath.Join("images", "photo.png")
+
+	if got != want || !replace {
+		t.Fatalf("outputFor() = %q, %v, want %q, true", got, replace, want)
 	}
 }
