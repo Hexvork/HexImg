@@ -1,18 +1,18 @@
 # HexImg
 
-HexImg 是一个使用 Go + Fyne 编写的原生跨平台 FFmpeg 图形化工具。项目不使用 Electron 或其他 Web 套壳，界面配色采用 fluent dark/light 风格，并通过 `internal/fas` 调用 Font Awesome Solid 图标资源。
+HexImg 是一个使用 Go + Fyne 编写的原生图片格式转换工具。项目不使用 Electron 或其他 Web 套壳，界面配色采用 fluent dark/light 风格，并通过 `internal/fas` 调用 Font Awesome Solid 图标资源。
 
 ## 功能
 
 - 原生 Fyne 桌面界面，支持深色/浅色主题。
-- 选择输入/输出文件，配置格式、质量、预设、缩放和额外 FFmpeg 参数。
-- 实时生成 FFmpeg 命令预览。
-- 调用系统 `ffmpeg` 执行任务并输出运行日志。
+- Windows 下使用系统文件选择器选择图片。
+- 选择目标格式，使用 0-100 质量滑块控制输出质量。
+- 调用系统 `ffmpeg` 执行图片转换并输出运行日志。
 - GitHub Actions 自动构建并发布 release 产物。
 
 ## 本地运行
 
-需要先安装 Go 和 FFmpeg，并确保 `ffmpeg` 在 `PATH` 中。
+需要先安装 Go、C 编译器和 FFmpeg，并确保 `ffmpeg` 在 `PATH` 中。
 
 ```powershell
 go mod tidy
@@ -22,7 +22,7 @@ go run ./cmd/heximg
 ## 构建
 
 ```powershell
-go build -trimpath -ldflags "-s -w" -o dist/HexImg.exe ./cmd/heximg
+go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/HexImg.exe ./cmd/heximg
 ```
 
 Windows 安装包可使用 Inno Setup：

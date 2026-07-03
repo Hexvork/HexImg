@@ -5,11 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image/color"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -27,15 +28,11 @@ import (
 
 var version = "dev"
 
-type encodeConfig struct {
-	input     string
-	output    string
-	format    string
-	quality   string
-	preset    string
-	scale     string
-	extraArgs string
-	overwrite bool
+type convertConfig struct {
+	input   string
+	output  string
+	format  string
+	quality int
 }
 
 func main() {
@@ -45,160 +42,106 @@ func main() {
 
 	win := hex.NewWindow("HexImg")
 	win.SetIcon(fas.Image)
-	win.Resize(fyne.NewSize(1120, 720))
+	win.Resize(fyne.NewSize(760, 520))
 	win.SetMaster()
 
-	inputEntry := widget.NewEntry()
-	inputEntry.SetPlaceHolder("选择图片、视频或音频文件")
+	selectedPath := widget.NewEntry()
+	selectedPath.SetPlaceHolder("请选择一张图片")
+	selectedPath.Disable()
 
-	outputEntry := widget.NewEntry()
-	outputEntry.SetPlaceHolder("选择输出文件")
-
-	formatSelect := widget.NewSelect([]string{"mp4", "webm", "mkv", "gif", "mp3", "wav"}, nil)
-	formatSelect.SetSelected("mp4")
-
-	qualitySelect := widget.NewSelect([]string{"高质量", "平衡", "体积优先"}, nil)
-	qualitySelect.SetSelected("平衡")
-
-	presetSelect := widget.NewSelect([]string{"auto", "ultrafast", "veryfast", "faster", "fast", "medium", "slow"}, nil)
-	presetSelect.SetSelected("medium")
-
-	scaleEntry := widget.NewEntry()
-	scaleEntry.SetPlaceHolder("例如 1920:-1，留空则保持原尺寸")
-
-	extraArgsEntry := widget.NewEntry()
-	extraArgsEntry.SetPlaceHolder("额外参数，例如 -movflags +faststart")
-
-	overwriteCheck := widget.NewCheck("覆盖已存在文件", nil)
-	overwriteCheck.SetChecked(true)
-
-	commandPreview := widget.NewMultiLineEntry()
-	commandPreview.Wrapping = fyne.TextWrapWord
-	commandPreview.SetMinRowsVisible(4)
-	commandPreview.Disable()
-
-	logOutput := widget.NewMultiLineEntry()
-	logOutput.Wrapping = fyne.TextWrapWord
-	logOutput.SetMinRowsVisible(10)
-	logOutput.Disable()
+	outputPath := widget.NewEntry()
+	outputPath.SetPlaceHolder("输出路径会自动生成")
+	outputPath.Disable()
 
 	statusLabel := widget.NewLabel("就绪")
 	statusLabel.Wrapping = fyne.TextWrapWord
 
-	var themeButton *widget.Button
-	themeButton = widget.NewButtonWithIcon("浅色模式", icon(fas.Sun), func() {
-		darkMode = !darkMode
-		hex.Settings().SetTheme(ui.NewFluentTheme(darkMode))
-		if darkMode {
-			themeButton.Text = "浅色模式"
-			themeButton.Icon = icon(fas.Sun)
-			themeButton.Refresh()
+	logOutput := widget.NewMultiLineEntry()
+	logOutput.Wrapping = fyne.TextWrapWord
+	logOutput.SetMinRowsVisible(5)
+	logOutput.Disable()
+
+	formatSelect := widget.NewSelect([]string{"jpg", "png", "webp", "bmp", "tiff"}, nil)
+	formatSelect.SetSelected("jpg")
+
+	qualityValue := widget.NewLabel("85")
+	qualitySlider := widget.NewSlider(0, 100)
+	qualitySlider.Step = 1
+	qualitySlider.Value = 85
+	qualitySlider.OnChanged = func(value float64) {
+		qualityValue.SetText(strconv.Itoa(int(value)))
+	}
+
+	cfg := func() convertConfig {
+		input := strings.TrimSpace(selectedPath.Text)
+		format := formatSelect.Selected
+		return convertConfig{
+			input:   input,
+			output:  outputFor(input, format),
+			format:  format,
+			quality: int(qualitySlider.Value),
+		}
+	}
+
+	refreshOutput := func() {
+		outputPath.SetText(cfg().output)
+	}
+
+	formatSelect.OnChanged = func(string) {
+		refreshOutput()
+	}
+
+	openInputButton := fixedButton("选择图片", icon(fas.FolderOpen), func() {
+		path, err := chooseImageFile()
+		if err != nil {
+			dialog.ShowError(err, win)
 			return
 		}
-		themeButton.Text = "深色模式"
-		themeButton.Icon = icon(fas.Moon)
-		themeButton.Refresh()
-	})
-
-	cfg := func() encodeConfig {
-		return encodeConfig{
-			input:     strings.TrimSpace(inputEntry.Text),
-			output:    strings.TrimSpace(outputEntry.Text),
-			format:    formatSelect.Selected,
-			quality:   qualitySelect.Selected,
-			preset:    presetSelect.Selected,
-			scale:     strings.TrimSpace(scaleEntry.Text),
-			extraArgs: strings.TrimSpace(extraArgsEntry.Text),
-			overwrite: overwriteCheck.Checked,
-		}
-	}
-
-	refreshPreview := func(_ string) {
-		args := buildFFmpegArgs(cfg())
-		commandPreview.SetText(shellPreview("ffmpeg", args))
-	}
-
-	inputEntry.OnChanged = func(value string) {
-		if strings.TrimSpace(outputEntry.Text) == "" && strings.TrimSpace(value) != "" {
-			outputEntry.SetText(defaultOutputPath(value, formatSelect.Selected))
+		if path == "" {
 			return
 		}
-		refreshPreview(value)
-	}
-	outputEntry.OnChanged = refreshPreview
-	scaleEntry.OnChanged = refreshPreview
-	extraArgsEntry.OnChanged = refreshPreview
-	formatSelect.OnChanged = func(value string) {
-		if strings.TrimSpace(inputEntry.Text) != "" {
-			outputEntry.SetText(defaultOutputPath(inputEntry.Text, value))
-			return
-		}
-		refreshPreview(value)
-	}
-	qualitySelect.OnChanged = refreshPreview
-	presetSelect.OnChanged = refreshPreview
-	overwriteCheck.OnChanged = func(bool) { refreshPreview("") }
-	refreshPreview("")
-
-	openInputButton := widget.NewButtonWithIcon("选择输入", icon(fas.FolderOpen), func() {
-		dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-			if err != nil {
-				dialog.ShowError(err, win)
-				return
-			}
-			if reader == nil {
-				return
-			}
-			defer reader.Close()
-			inputEntry.SetText(reader.URI().Path())
-		}, win).Show()
-	})
-
-	openOutputButton := widget.NewButtonWithIcon("保存为", icon(fas.FileExport), func() {
-		dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
-			if err != nil {
-				dialog.ShowError(err, win)
-				return
-			}
-			if writer == nil {
-				return
-			}
-			defer writer.Close()
-			outputEntry.SetText(writer.URI().Path())
-		}, win).Show()
+		selectedPath.SetText(path)
+		refreshOutput()
+		statusLabel.SetText("已选择：" + filepath.Base(path))
 	})
 
 	var cancelMu sync.Mutex
 	var cancelRun context.CancelFunc
 
-	runButton := widget.NewButtonWithIcon("开始处理", icon(fas.Play), nil)
-	runButton.Importance = widget.HighImportance
+	convertButton := widget.NewButtonWithIcon("转换", icon(fas.Play), nil)
+	convertButton.Importance = widget.HighImportance
+	convertButtonContainer := fixedButtonObject(convertButton)
 
 	cancelButton := widget.NewButtonWithIcon("停止", icon(fas.Stop), func() {
 		cancelMu.Lock()
 		defer cancelMu.Unlock()
 		if cancelRun != nil {
 			cancelRun()
-			statusLabel.SetText("正在停止 FFmpeg...")
+			statusLabel.SetText("正在停止转换...")
 		}
 	})
 	cancelButton.Disable()
+	cancelButtonContainer := fixedButtonObject(cancelButton)
 
-	runButton.OnTapped = func() {
+	convertButton.OnTapped = func() {
 		current := cfg()
 		if current.input == "" {
-			dialog.ShowError(errors.New("请先选择输入文件"), win)
+			dialog.ShowError(errors.New("请先选择图片"), win)
 			return
 		}
-		if current.output == "" {
-			dialog.ShowError(errors.New("请先选择输出文件"), win)
+		if current.format == "" {
+			dialog.ShowError(errors.New("请先选择转换格式"), win)
+			return
+		}
+		if _, err := os.Stat(current.input); err != nil {
+			dialog.ShowError(fmt.Errorf("输入图片不可用：%w", err), win)
 			return
 		}
 
 		args := buildFFmpegArgs(current)
 		logOutput.SetText("")
-		statusLabel.SetText("正在调用 FFmpeg...")
-		runButton.Disable()
+		statusLabel.SetText("正在转换...")
+		convertButton.Disable()
 		cancelButton.Enable()
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -216,7 +159,7 @@ func main() {
 			cancelMu.Unlock()
 
 			fyne.Do(func() {
-				runButton.Enable()
+				convertButton.Enable()
 				cancelButton.Disable()
 			})
 
@@ -225,281 +168,140 @@ func main() {
 				return
 			}
 			if err != nil {
-				setStatus(statusLabel, "执行失败："+err.Error())
+				setStatus(statusLabel, "转换失败："+err.Error())
 				return
 			}
-			setStatus(statusLabel, "处理完成："+filepath.Base(current.output))
+			setStatus(statusLabel, "转换完成："+filepath.Base(current.output))
 		}()
 	}
 
+	var themeButton *widget.Button
+	themeButton = widget.NewButtonWithIcon("", icon(fas.Sun), func() {
+		darkMode = !darkMode
+		hex.Settings().SetTheme(ui.NewFluentTheme(darkMode))
+		if darkMode {
+			themeButton.Icon = icon(fas.Sun)
+		} else {
+			themeButton.Icon = icon(fas.Moon)
+		}
+		themeButton.Refresh()
+	})
+
 	title := canvas.NewText("HexImg", ui.TextColor(true))
-	title.TextSize = 30
+	title.TextSize = 28
 	title.TextStyle = fyne.TextStyle{Bold: true}
-	subtitle := canvas.NewText(fmt.Sprintf("FFmpeg native desktop · Go + Fyne · %s · %s/%s", version, runtime.GOOS, runtime.GOARCH), ui.MutedTextColor(true))
+	subtitle := canvas.NewText(fmt.Sprintf("图片格式转换 · FFmpeg · %s · %s/%s", version, runtime.GOOS, runtime.GOARCH), ui.MutedTextColor(true))
 	subtitle.TextSize = 13
 
-	header := container.NewBorder(nil, nil, nil, themeButton, container.NewVBox(title, subtitle))
-
-	sourceCard := fluentCard(true, "源文件", "选择输入和输出位置", container.NewVBox(
-		widget.NewLabel("输入文件"),
-		container.NewBorder(nil, nil, nil, openInputButton, inputEntry),
+	header := container.NewBorder(nil, nil, nil, fixedIconButton(themeButton), container.NewVBox(title, subtitle))
+	sourceCard := fluentCard("图片", container.NewVBox(
+		widget.NewLabel("输入图片"),
+		container.NewBorder(nil, nil, nil, openInputButton, selectedPath),
 		widget.NewLabel("输出文件"),
-		container.NewBorder(nil, nil, nil, openOutputButton, outputEntry),
+		outputPath,
 	))
 
-	settingsCard := fluentCard(true, "编码设置", "常用 FFmpeg 参数", container.NewVBox(
-		container.NewGridWithColumns(3,
-			container.NewVBox(widget.NewLabel("格式"), formatSelect),
-			container.NewVBox(widget.NewLabel("质量"), qualitySelect),
-			container.NewVBox(widget.NewLabel("预设"), presetSelect),
-		),
-		widget.NewLabel("缩放"),
-		scaleEntry,
-		widget.NewLabel("额外参数"),
-		extraArgsEntry,
-		overwriteCheck,
+	settingsCard := fluentCard("转换设置", container.NewVBox(
+		widget.NewLabel("目标格式"),
+		formatSelect,
+		container.NewBorder(nil, nil, widget.NewLabel("质量"), qualityValue, qualitySlider),
 	))
 
-	commandCard := fluentCard(true, "命令预览", "执行前可检查参数", commandPreview)
-	logCard := fluentCard(true, "运行日志", "FFmpeg 输出", logOutput)
+	logCard := fluentCard("状态", container.NewVBox(statusLabel, logOutput))
+	actionBar := container.NewBorder(nil, nil, nil, container.NewHBox(cancelButtonContainer, convertButtonContainer), nil)
 
-	actionBar := container.NewBorder(nil, nil, statusLabel, container.NewHBox(cancelButton, runButton), nil)
-	mainPanel := container.NewBorder(header, actionBar, nil, nil, container.NewVScroll(container.NewVBox(
-		sourceCard,
-		settingsCard,
-		commandCard,
-		logCard,
-	)))
-
-	content := container.NewBorder(nil, nil, referencePanel(), nil, mainPanel)
+	content := container.NewBorder(
+		header,
+		actionBar,
+		nil,
+		nil,
+		container.NewPadded(container.NewVBox(sourceCard, settingsCard, logCard)),
+	)
 	win.SetContent(content)
+	refreshOutput()
 	win.ShowAndRun()
 }
 
-func referencePanel() fyne.CanvasObject {
-	darkCard := paletteCard(true)
-	lightCard := paletteCard(false)
-	return container.NewVBox(
-		darkCard,
-		lightCard,
-	)
+func fixedButton(text string, iconResource fyne.Resource, tapped func()) fyne.CanvasObject {
+	return fixedButtonObject(widget.NewButtonWithIcon(text, iconResource, tapped))
 }
 
-func paletteCard(dark bool) fyne.CanvasObject {
-	title := "fluent-light"
-	if dark {
-		title = "fluent-dark"
-	}
-
-	heading := canvas.NewText(title, ui.TextColor(dark))
-	heading.TextStyle = fyne.TextStyle{Bold: true}
-	heading.TextSize = 20
-
-	card := container.NewVBox(
-		heading,
-		colorRow(dark, "背景", ui.BackgroundColor(dark), ui.MutedTextColor(dark), false),
-		colorRow(dark, "卡片层", ui.CardColor(dark), ui.MutedTextColor(dark), false),
-		colorRow(dark, "强调色", ui.AccentColor(dark), ui.AccentTextColor(dark), false),
-		colorRow(dark, "文字", ui.TextColor(dark), ui.InvertedTextColor(dark), false),
-		buttonPreview(dark),
-		menuPreview(dark),
-	)
-
-	return fixedWidth(280, cardBackground(dark, card))
+func fixedButtonObject(button *widget.Button) fyne.CanvasObject {
+	return container.NewGridWrap(fyne.NewSize(128, 40), button)
 }
 
-func colorRow(dark bool, label string, fill color.Color, textColor color.Color, selected bool) fyne.CanvasObject {
-	left := canvas.NewText(label, textColor)
-	left.TextSize = 14
-	left.TextStyle = fyne.TextStyle{Bold: selected}
-	right := canvas.NewText(ui.ColorHex(fill), textColor)
-	right.TextSize = 13
-
-	row := container.NewBorder(nil, nil, left, right)
-	return rowBackground(fill, row)
+func fixedIconButton(button *widget.Button) fyne.CanvasObject {
+	return container.NewGridWrap(fyne.NewSize(40, 40), button)
 }
 
-func buttonPreview(dark bool) fyne.CanvasObject {
-	text := canvas.NewText("Button", ui.TextColor(dark))
-	text.Alignment = fyne.TextAlignCenter
-	text.TextSize = 14
-	return rowBackground(ui.ButtonColor(dark), container.NewCenter(text))
-}
-
-func menuPreview(dark bool) fyne.CanvasObject {
-	item := canvas.NewText("Menu item", ui.TextColor(dark))
-	item.TextSize = 14
-	selected := canvas.NewText("Selected", ui.TextColor(dark))
-	selected.TextSize = 13
-
-	selectedBox := rowBackground(ui.SelectionColor(dark), container.NewBorder(nil, nil, selected, nil))
-	return rowBackground(ui.CardColor(dark), container.NewVBox(item, selectedBox))
-}
-
-func fluentCard(dark bool, titleText, subtitleText string, content fyne.CanvasObject) fyne.CanvasObject {
-	title := canvas.NewText(titleText, ui.TextColor(dark))
+func fluentCard(titleText string, content fyne.CanvasObject) fyne.CanvasObject {
+	title := canvas.NewText(titleText, ui.TextColor(true))
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	title.TextSize = 18
-	subtitle := canvas.NewText(subtitleText, ui.MutedTextColor(dark))
-	subtitle.TextSize = 12
 
-	body := container.NewVBox(title, subtitle, widget.NewSeparator(), content)
-	return cardBackground(dark, body)
-}
-
-func cardBackground(dark bool, content fyne.CanvasObject) fyne.CanvasObject {
-	bg := canvas.NewRectangle(ui.CardColor(dark))
-	bg.CornerRadius = 14
-	return container.NewStack(bg, container.NewPadded(content))
-}
-
-func rowBackground(fill color.Color, content fyne.CanvasObject) fyne.CanvasObject {
-	bg := canvas.NewRectangle(fill)
-	bg.CornerRadius = 6
-	return container.NewStack(bg, container.NewPadded(content))
-}
-
-func fixedWidth(width float32, content fyne.CanvasObject) fyne.CanvasObject {
-	return container.NewGridWrap(fyne.NewSize(width, content.MinSize().Height), content)
+	body := container.NewVBox(title, widget.NewSeparator(), content)
+	bg := canvas.NewRectangle(ui.CardColor(true))
+	bg.CornerRadius = 8
+	return container.NewStack(bg, container.NewPadded(body))
 }
 
 func icon(resource fyne.Resource) fyne.Resource {
 	return theme.NewThemedResource(resource)
 }
 
-func buildFFmpegArgs(cfg encodeConfig) []string {
-	args := []string{"-hide_banner"}
-	if cfg.overwrite {
-		args = append(args, "-y")
-	} else {
-		args = append(args, "-n")
+func outputFor(inputPath, format string) string {
+	if inputPath == "" {
+		return ""
 	}
-	if cfg.input != "" {
-		args = append(args, "-i", cfg.input)
-	}
-
-	switch cfg.format {
-	case "mp3":
-		args = append(args, "-vn", "-c:a", "libmp3lame")
-		args = append(args, audioQualityArgs(cfg.quality)...)
-	case "wav":
-		args = append(args, "-vn", "-c:a", "pcm_s16le")
-	case "webm":
-		args = append(args, "-c:v", "libvpx-vp9", "-c:a", "libopus")
-		args = append(args, videoQualityArgs(cfg.quality)...)
-	case "gif":
-		filter := "fps=15"
-		if cfg.scale != "" {
-			filter += ",scale=" + cfg.scale
-		}
-		args = append(args, "-vf", filter)
-	default:
-		args = append(args, "-c:v", "libx264", "-c:a", "aac")
-		if cfg.preset != "" && cfg.preset != "auto" {
-			args = append(args, "-preset", cfg.preset)
-		}
-		args = append(args, videoQualityArgs(cfg.quality)...)
-	}
-
-	if cfg.scale != "" && cfg.format != "gif" {
-		args = append(args, "-vf", "scale="+cfg.scale)
-	}
-
-	args = append(args, splitExtraArgs(cfg.extraArgs)...)
-	if cfg.output != "" {
-		args = append(args, cfg.output)
-	}
-	return args
-}
-
-func videoQualityArgs(quality string) []string {
-	switch quality {
-	case "高质量":
-		return []string{"-crf", "18"}
-	case "体积优先":
-		return []string{"-crf", "30"}
-	default:
-		return []string{"-crf", "23"}
-	}
-}
-
-func audioQualityArgs(quality string) []string {
-	switch quality {
-	case "高质量":
-		return []string{"-b:a", "320k"}
-	case "体积优先":
-		return []string{"-b:a", "128k"}
-	default:
-		return []string{"-b:a", "192k"}
-	}
-}
-
-func splitExtraArgs(input string) []string {
-	var args []string
-	var current strings.Builder
-	var quote rune
-	escaped := false
-
-	for _, r := range input {
-		switch {
-		case escaped:
-			current.WriteRune(r)
-			escaped = false
-		case r == '\\':
-			escaped = true
-		case quote != 0:
-			if r == quote {
-				quote = 0
-			} else {
-				current.WriteRune(r)
-			}
-		case r == '\'' || r == '"':
-			quote = r
-		case r == ' ' || r == '\t' || r == '\n':
-			if current.Len() > 0 {
-				args = append(args, current.String())
-				current.Reset()
-			}
-		default:
-			current.WriteRune(r)
-		}
-	}
-	if current.Len() > 0 {
-		args = append(args, current.String())
-	}
-	return args
-}
-
-func shellPreview(binary string, args []string) string {
-	quoted := make([]string, 0, len(args)+1)
-	quoted = append(quoted, binary)
-	for _, arg := range args {
-		quoted = append(quoted, quoteArg(arg))
-	}
-	return strings.Join(quoted, " ")
-}
-
-func quoteArg(arg string) string {
-	if arg == "" {
-		return `""`
-	}
-	if strings.ContainsAny(arg, " \t\n\"'") {
-		return `"` + strings.ReplaceAll(arg, `"`, `\"`) + `"`
-	}
-	return arg
-}
-
-func defaultOutputPath(inputPath, format string) string {
-	ext := "." + format
 	if format == "" {
-		ext = ".mp4"
+		format = "jpg"
 	}
 	base := strings.TrimSuffix(inputPath, filepath.Ext(inputPath))
-	return base + "_heximg" + ext
+	return base + "_converted." + format
+}
+
+func buildFFmpegArgs(cfg convertConfig) []string {
+	args := []string{"-hide_banner", "-y", "-i", cfg.input}
+
+	switch cfg.format {
+	case "jpg", "jpeg":
+		args = append(args, "-frames:v", "1", "-q:v", strconv.Itoa(jpegQScale(cfg.quality)))
+	case "webp":
+		args = append(args, "-frames:v", "1", "-compression_level", "6", "-quality", strconv.Itoa(cfg.quality))
+	case "png":
+		args = append(args, "-frames:v", "1", "-compression_level", strconv.Itoa(pngCompression(cfg.quality)))
+	case "bmp", "tiff":
+		args = append(args, "-frames:v", "1")
+	default:
+		args = append(args, "-frames:v", "1")
+	}
+
+	return append(args, cfg.output)
+}
+
+func jpegQScale(quality int) int {
+	quality = clampQuality(quality)
+	return 31 - int(float64(quality)*29.0/100.0)
+}
+
+func pngCompression(quality int) int {
+	quality = clampQuality(quality)
+	return 9 - int(float64(quality)*9.0/100.0)
+}
+
+func clampQuality(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
 }
 
 func runFFmpeg(ctx context.Context, args []string, appendLine func(string)) error {
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	hideCommandWindow(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -535,7 +337,7 @@ func runFFmpeg(ctx context.Context, args []string, appendLine func(string)) erro
 
 func appendLog(logOutput *widget.Entry, line string) {
 	fyne.Do(func() {
-		const maxLogLength = 48000
+		const maxLogLength = 24000
 		current := logOutput.Text
 		if len(current) > maxLogLength {
 			current = current[len(current)-maxLogLength:]

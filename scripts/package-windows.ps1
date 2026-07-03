@@ -15,7 +15,7 @@ $env:CGO_ENABLED = "1"
 $env:GOOS = "windows"
 $env:GOARCH = $goArch
 
-go build -trimpath -ldflags "-s -w -X main.version=$Version" -o (Join-Path $distDir "HexImg.exe") ./cmd/heximg
+go build -trimpath -ldflags "-s -w -H=windowsgui -X main.version=$Version" -o (Join-Path $distDir "HexImg.exe") ./cmd/heximg
 
 $iscc = Get-Command iscc -ErrorAction SilentlyContinue
 if (-not $iscc) {
