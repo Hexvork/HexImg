@@ -30,7 +30,8 @@ jobs:
             runner: windows-latest
             goos: windows
             goarch: amd64
-            cc: gcc
+            cc: "C:\\msys64\\ucrt64\\bin\\gcc.exe"
+            cgo_cflags: ""
             artifact_ext: .exe
             windows_arch: x64
             msystem: UCRT64
@@ -39,11 +40,12 @@ jobs:
             runner: windows-11-arm
             goos: windows
             goarch: arm64
-            cc: clang
+            cc: "C:\\msys64\\clangarm64\\bin\\clang.exe"
+            cgo_cflags: "-DWINBOOL=BOOL -Wno-strict-prototypes"
             artifact_ext: .exe
             windows_arch: arm64
             msystem: CLANGARM64
-            msys_packages: mingw-w64-clang-aarch64-gcc
+            msys_packages: mingw-w64-clang-aarch64-clang
           - name: macos-apple-silicon
             runner: macos-14
             goos: darwin
@@ -110,6 +112,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CC: ${{ matrix.cc }}
+          CGO_CFLAGS: ${{ matrix.cgo_cflags }}
         run: |
           mkdir -p dist
           go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=${{ steps.version.outputs.value }}" -o "dist/${APP_NAME}-${{ matrix.name }}${{ matrix.artifact_ext }}" ./cmd/heximg
