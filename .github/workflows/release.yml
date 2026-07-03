@@ -47,7 +47,7 @@ jobs:
             artifact_ext: .exe
             windows_arch: arm64
             msystem: CLANGARM64
-            msys_packages: mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-winpthread
+            msys_packages: mingw-w64-clang-aarch64-clang
           - name: macos-apple-silicon
             runner: macos-14
             goos: darwin
