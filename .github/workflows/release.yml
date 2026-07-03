@@ -30,6 +30,7 @@ jobs:
             runner: windows-latest
             goos: windows
             goarch: amd64
+            cc: gcc
             artifact_ext: .exe
             windows_arch: x64
             msystem: UCRT64
@@ -38,6 +39,7 @@ jobs:
             runner: windows-11-arm
             goos: windows
             goarch: arm64
+            cc: clang
             artifact_ext: .exe
             windows_arch: arm64
             msystem: CLANGARM64
@@ -107,6 +109,7 @@ jobs:
           CGO_ENABLED: "1"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
         run: |
           mkdir -p dist
           go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=${{ steps.version.outputs.value }}" -o "dist/${APP_NAME}-${{ matrix.name }}${{ matrix.artifact_ext }}" ./cmd/heximg

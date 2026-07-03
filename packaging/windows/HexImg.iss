@@ -35,7 +35,6 @@ ArchitecturesInstallIn64BitMode=x64compatible arm64
 UninstallDisplayIcon={app}\HexImg.exe
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
