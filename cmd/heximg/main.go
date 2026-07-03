@@ -71,6 +71,9 @@ func main() {
 
 	statusLabel := widget.NewLabel("就绪")
 	statusLabel.Wrapping = fyne.TextWrapWord
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		statusLabel.SetText("未检测到 FFmpeg，请先安装并加入 PATH")
+	}
 
 	logOutput := widget.NewMultiLineEntry()
 	logOutput.Wrapping = fyne.TextWrapWord
@@ -176,17 +179,18 @@ func main() {
 	}
 
 	openInputButton := fixedButton("选择图片", icon(fas.FolderOpen), func() {
-		path, err := chooseImageFile()
-		if err != nil {
-			dialog.ShowError(err, win)
-			return
-		}
-		if path == "" {
-			return
-		}
-		selectedPath.SetText(path)
-		refreshOutput()
-		statusLabel.SetText("已选择：" + filepath.Base(path))
+		chooseImageFile(win, func(path string, err error) {
+			if err != nil {
+				dialog.ShowError(err, win)
+				return
+			}
+			if path == "" {
+				return
+			}
+			selectedPath.SetText(path)
+			refreshOutput()
+			statusLabel.SetText("已选择：" + filepath.Base(path))
+		})
 	})
 
 	var cancelMu sync.Mutex
@@ -219,6 +223,11 @@ func main() {
 		}
 		if _, err := os.Stat(current.input); err != nil {
 			dialog.ShowError(fmt.Errorf("输入图片不可用：%w", err), win)
+			return
+		}
+		if _, err := exec.LookPath("ffmpeg"); err != nil {
+			dialog.ShowError(errors.New("未找到 ffmpeg，请先安装 FFmpeg 并加入 PATH"), win)
+			statusLabel.SetText("未检测到 FFmpeg，请先安装并加入 PATH")
 			return
 		}
 
@@ -265,6 +274,11 @@ func main() {
 				return
 			}
 			if err := finalizeOutput(current); err != nil {
+				var warning *finalizeWarning
+				if errors.As(err, &warning) {
+					setStatus(statusLabel, "转换完成，但"+warning.Error())
+					return
+				}
 				setStatus(statusLabel, "保存失败："+err.Error())
 				return
 			}
@@ -401,10 +415,10 @@ func buildFFmpegArgs(cfg convertConfig) []string {
 	args := []string{"-hide_banner", "-y", "-i", cfg.input}
 
 	switch cfg.format {
-	case "jpg", "jpeg":
+	case "jpg":
 		args = append(args, "-frames:v", "1", "-q:v", strconv.Itoa(jpegQScale(cfg.quality)))
 	case "webp":
-		args = append(args, "-frames:v", "1", "-compression_level", "6", "-quality", strconv.Itoa(cfg.quality))
+		args = append(args, "-frames:v", "1", "-compression_level", "6", "-quality", strconv.Itoa(clampQuality(cfg.quality)))
 	case "png":
 		args = append(args, "-frames:v", "1", "-compression_level", strconv.Itoa(pngCompressionLevel(cfg.quality)))
 	case "bmp", "tiff":
@@ -431,6 +445,13 @@ func prepareOutput(cfg convertConfig) (string, func(), error) {
 	if !cfg.replaceSource {
 		return cfg.output, func() {}, nil
 	}
+	if !samePath(cfg.input, cfg.output) {
+		if _, err := os.Stat(cfg.output); err == nil {
+			return "", func() {}, fmt.Errorf("输出文件已存在，未覆盖：%s", cfg.output)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", func() {}, fmt.Errorf("检查输出文件失败：%w", err)
+		}
+	}
 
 	temp, err := os.CreateTemp(outputDir, ".heximg-*."+cfg.format)
 	if err != nil {
@@ -447,6 +468,22 @@ func prepareOutput(cfg convertConfig) (string, func(), error) {
 	return workOutput, cleanup, nil
 }
 
+type finalizeWarning struct {
+	message string
+	err     error
+}
+
+func (w *finalizeWarning) Error() string {
+	if w.err == nil {
+		return w.message
+	}
+	return w.message + "：" + w.err.Error()
+}
+
+func (w *finalizeWarning) Unwrap() error {
+	return w.err
+}
+
 func finalizeOutput(cfg convertConfig) error {
 	if !cfg.replaceSource {
 		return nil
@@ -455,20 +492,94 @@ func finalizeOutput(cfg convertConfig) error {
 		return errors.New("临时输出路径不可用")
 	}
 	if samePath(cfg.input, cfg.output) {
-		if err := os.Rename(cfg.workOutput, cfg.output); err == nil {
-			return nil
+		backup, err := reserveBackupPath(cfg.output)
+		if err != nil {
+			return fmt.Errorf("创建源文件备份路径失败：%w", err)
 		}
-		if err := os.Remove(cfg.output); err != nil {
-			return fmt.Errorf("删除源文件失败：%w", err)
+		if err := os.Rename(cfg.output, backup); err != nil {
+			return fmt.Errorf("备份源文件失败：%w", err)
 		}
-		return os.Rename(cfg.workOutput, cfg.output)
+		if err := moveFileNoOverwrite(cfg.workOutput, cfg.output); err != nil {
+			if restoreErr := os.Rename(backup, cfg.output); restoreErr != nil {
+				return fmt.Errorf("替换源文件失败：%w；恢复源文件也失败，备份保留在 %s：%v", err, backup, restoreErr)
+			}
+			return fmt.Errorf("替换源文件失败，已恢复原文件：%w", err)
+		}
+		if err := os.Remove(backup); err != nil {
+			return &finalizeWarning{message: "清理备份失败；替换文件已保存", err: err}
+		}
+		return nil
 	}
-	if err := os.Rename(cfg.workOutput, cfg.output); err != nil {
+	if err := moveFileNoOverwrite(cfg.workOutput, cfg.output); err != nil {
 		return fmt.Errorf("保存替换文件失败：%w", err)
 	}
 	if err := os.Remove(cfg.input); err != nil {
-		return fmt.Errorf("删除源文件失败：%w", err)
+		return &finalizeWarning{message: "删除源文件失败；输出文件已保存", err: err}
 	}
+	return nil
+}
+
+func reserveBackupPath(target string) (string, error) {
+	dir := filepath.Dir(target)
+	ext := filepath.Ext(target)
+	base := sanitizePathPart(strings.TrimSuffix(filepath.Base(target), ext), "source")
+	temp, err := os.CreateTemp(dir, ".heximg-"+base+"-*.bak"+ext)
+	if err != nil {
+		return "", err
+	}
+	name := temp.Name()
+	closeErr := temp.Close()
+	removeErr := os.Remove(name)
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if removeErr != nil {
+		return "", removeErr
+	}
+	return name, nil
+}
+
+func moveFileNoOverwrite(src, dst string) error {
+	if err := os.Link(src, dst); err == nil {
+		_ = os.Remove(src)
+		return nil
+	} else if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("目标文件已存在，未覆盖：%s", dst)
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	info, err := srcFile.Stat()
+	if err != nil {
+		return err
+	}
+	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("目标文件已存在，未覆盖：%s", dst)
+		}
+		return err
+	}
+
+	cleanupDst := true
+	defer func() {
+		if cleanupDst {
+			_ = os.Remove(dst)
+		}
+	}()
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		_ = dstFile.Close()
+		return err
+	}
+	if err := dstFile.Close(); err != nil {
+		return err
+	}
+	cleanupDst = false
+	_ = os.Remove(src)
 	return nil
 }
 
@@ -563,12 +674,14 @@ func runFFmpeg(ctx context.Context, args []string, appendLine func(string)) erro
 func appendLog(logOutput *widget.Entry, line string) {
 	fyne.Do(func() {
 		const maxLogLength = 24000
-		current := logOutput.Text
-		runes := []rune(current)
-		if len(runes) > maxLogLength {
-			current = string(runes[len(runes)-maxLogLength:])
+		logOutput.Append(line + "\n")
+		if len(logOutput.Text) <= maxLogLength {
+			return
 		}
-		logOutput.SetText(current + line + "\n")
+		runes := []rune(logOutput.Text)
+		if len(runes) > maxLogLength {
+			logOutput.SetText(string(runes[len(runes)-maxLogLength:]))
+		}
 	})
 }
 

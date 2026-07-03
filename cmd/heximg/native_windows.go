@@ -8,9 +8,11 @@ import (
 	"strings"
 	"syscall"
 	"unicode/utf8"
+
+	"fyne.io/fyne/v2"
 )
 
-func chooseImageFile() (string, error) {
+func chooseImageFile(_ fyne.Window, selected func(string, error)) {
 	script := `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -27,12 +29,14 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 	hideCommandWindow(cmd)
 	output, err := cmd.Output()
 	if err != nil {
-		return "", errors.New("打开 Windows 文件选择器失败")
+		selected("", errors.New("打开 Windows 文件选择器失败"))
+		return
 	}
 	if !utf8.Valid(output) {
-		return "", errors.New("Windows 文件选择器返回了非 UTF-8 路径")
+		selected("", errors.New("Windows 文件选择器返回了非 UTF-8 路径"))
+		return
 	}
-	return strings.TrimSpace(strings.TrimPrefix(string(output), "\ufeff")), nil
+	selected(strings.TrimSpace(strings.TrimPrefix(string(output), "\ufeff")), nil)
 }
 
 func hideCommandWindow(cmd *exec.Cmd) {

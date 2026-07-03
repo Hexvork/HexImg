@@ -36,6 +36,7 @@ UninstallDisplayIcon={app}\HexImg.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Files]
 Source: "{#SourceDir}\HexImg.exe"; DestDir: "{app}"; Flags: ignoreversion

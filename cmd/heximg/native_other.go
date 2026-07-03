@@ -3,12 +3,30 @@
 package main
 
 import (
-	"errors"
 	"os/exec"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 )
 
-func chooseImageFile() (string, error) {
-	return "", errors.New("当前原生文件选择器仅支持 Windows")
+func chooseImageFile(win fyne.Window, selected func(string, error)) {
+	fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+		if err != nil {
+			selected("", err)
+			return
+		}
+		if reader == nil {
+			selected("", nil)
+			return
+		}
+		defer reader.Close()
+		selected(reader.URI().Path(), nil)
+	}, win)
+	fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{
+		".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif",
+	}))
+	fileDialog.Show()
 }
 
 func hideCommandWindow(cmd *exec.Cmd) {
