@@ -30,7 +30,7 @@ jobs:
             runner: windows-latest
             goos: windows
             goarch: amd64
-            cc: "C:\\msys64\\ucrt64\\bin\\gcc.exe"
+            cc: gcc
             cgo_cflags: ""
             artifact_ext: .exe
             windows_arch: x64
@@ -40,7 +40,7 @@ jobs:
             runner: windows-11-arm
             goos: windows
             goarch: arm64
-            cc: "C:\\msys64\\clangarm64\\bin\\clang.exe"
+            cc: clang
             cgo_cflags: "-DWINBOOL=BOOL -Wno-strict-prototypes"
             artifact_ext: .exe
             windows_arch: arm64
