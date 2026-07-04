@@ -53,11 +53,11 @@ jobs:
             goos: darwin
             goarch: arm64
             artifact_ext: ""
-          - name: macos-intel
-            runner: macos-13
-            goos: darwin
-            goarch: amd64
-            artifact_ext: ""
+- name: macos-intel
+  runner: macos-14
+  goos: darwin
+  goarch: amd64
+  artifact_ext: ""
           - name: linux-x86_64
             runner: ubuntu-latest
             goos: linux
