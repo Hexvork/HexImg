@@ -18,6 +18,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -60,9 +61,20 @@ func main() {
 	win.Resize(fyne.NewSize(760, 520))
 	win.SetMaster()
 
-	selectedPath := widget.NewEntry()
-	selectedPath.SetPlaceHolder("请选择一张图片")
-	selectedPath.Disable()
+	// Image list: each file is a block with a delete button
+	var imagePaths []string
+
+	imageChips := container.NewHBox()
+	imageChipsScroll := container.NewScroll(imageChips)
+	imageChipsScroll.SetMinSize(fyne.NewSize(0, 42))
+	imageChipsScroll.Hide()
+
+	// Forward-declared; assigned after all helpers are defined below
+	var clearAllBtn *widget.Button
+	var refreshImageChips func()
+	var refreshDropHint func()
+
+	allInputs := func() []string { return imagePaths }
 
 	outputPath := widget.NewEntry()
 	outputPath.SetPlaceHolder("输出路径会自动生成")
@@ -83,8 +95,7 @@ func main() {
 	formatSelect.Horizontal = true
 	formatSelect.SetSelected("jpg")
 
-	outputModeSelect := widget.NewRadioGroup([]string{outputModeSuffix, outputModeFolder, outputModeReplace}, nil)
-	outputModeSelect.Horizontal = true
+	outputModeSelect := widget.NewSelect([]string{outputModeSuffix, outputModeFolder, outputModeReplace}, nil)
 	outputModeSelect.SetSelected(outputModeSuffix)
 
 	suffixEntry := widget.NewEntry()
@@ -104,16 +115,19 @@ func main() {
 	}
 
 	cfg := func() convertConfig {
-		input := strings.TrimSpace(selectedPath.Text)
+		var first string
+		if len(imagePaths) > 0 {
+			first = imagePaths[0]
+		}
 		format := formatSelect.Selected
 		settings := outputSettings{
 			mode:       outputModeSelect.Selected,
 			suffix:     strings.TrimSpace(suffixEntry.Text),
 			folderName: strings.TrimSpace(folderEntry.Text),
 		}
-		output, replaceSource := outputFor(input, format, settings)
+		output, replaceSource := outputFor(first, format, settings)
 		return convertConfig{
-			input:         input,
+			input:         first,
 			output:        output,
 			format:        format,
 			quality:       int(qualitySlider.Value),
@@ -179,18 +193,35 @@ func main() {
 		refreshOutput()
 	}
 
+	// Hint shown when no image has been selected yet
+	dropHint := widget.NewLabelWithStyle("可拖拽图片至窗口", fyne.TextAlignCenter, fyne.TextStyle{})
+	dropHint.Importance = widget.LowImportance
+	refreshDropHint = func() {
+		if len(imagePaths) == 0 {
+			dropHint.Show()
+		} else {
+			dropHint.Hide()
+		}
+	}
+
 	openInputButton := widget.NewButtonWithIcon("选择图片", icon(fas.FolderOpen), func() {
-		chooseImageFile(win, func(path string, err error) {
+		chooseImageFile(win, func(paths []string, err error) {
 			if err != nil {
 				dialog.ShowError(err, win)
 				return
 			}
-			if path == "" {
+			if len(paths) == 0 {
 				return
 			}
-			selectedPath.SetText(path)
+			imagePaths = append(imagePaths, paths...)
+			refreshImageChips()
 			refreshOutput()
-			statusLabel.SetText("已选择：" + filepath.Base(path))
+			refreshDropHint()
+			if len(imagePaths) == 1 {
+				statusLabel.SetText("已选择：" + filepath.Base(imagePaths[0]))
+			} else {
+				statusLabel.SetText(fmt.Sprintf("已选择 %d 张图片", len(imagePaths)))
+			}
 		})
 	})
 
@@ -211,17 +242,9 @@ func main() {
 	cancelButton.Disable()
 
 	convertButton.OnTapped = func() {
-		current := cfg()
-		if current.input == "" {
+		inputs := allInputs()
+		if len(inputs) == 0 {
 			dialog.ShowError(errors.New("请先选择图片"), win)
-			return
-		}
-		if current.format == "" {
-			dialog.ShowError(errors.New("请先选择转换格式"), win)
-			return
-		}
-		if _, err := os.Stat(current.input); err != nil {
-			dialog.ShowError(fmt.Errorf("输入图片不可用：%w", err), win)
 			return
 		}
 		if _, err := exec.LookPath("ffmpeg"); err != nil {
@@ -230,14 +253,19 @@ func main() {
 			return
 		}
 
-		workOutput, cleanup, err := prepareOutput(current)
-		if err != nil {
-			dialog.ShowError(err, win)
+		format := formatSelect.Selected
+		if format == "" {
+			dialog.ShowError(errors.New("请先选择转换格式"), win)
 			return
 		}
-		current.workOutput = workOutput
 
-		args := buildFFmpegArgs(current)
+		quality := int(qualitySlider.Value)
+		settings := outputSettings{
+			mode:       outputModeSelect.Selected,
+			suffix:     strings.TrimSpace(suffixEntry.Text),
+			folderName: strings.TrimSpace(folderEntry.Text),
+		}
+
 		logOutput.SetText("")
 		statusLabel.SetText("正在转换...")
 		convertButton.Disable()
@@ -249,40 +277,118 @@ func main() {
 		cancelMu.Unlock()
 
 		go func() {
-			defer cleanup()
+			total := len(inputs)
+			for i, input := range inputs {
+				select {
+				case <-ctx.Done():
+					fyne.Do(func() {
+						statusLabel.SetText("已停止")
+					})
+					cancelMu.Lock()
+					cancelRun = nil
+					cancelMu.Unlock()
+					fyne.Do(func() {
+						convertButton.Enable()
+						cancelButton.Disable()
+					})
+					return
+				default:
+				}
 
-			err := runFFmpeg(ctx, args, func(line string) {
-				appendLog(logOutput, line)
-			})
+				output, replaceSource := outputFor(input, format, settings)
+				cfg := convertConfig{
+					input:         input,
+					output:        output,
+					format:        format,
+					quality:       quality,
+					replaceSource: replaceSource,
+				}
+
+				workOutput, cleanup, err := prepareOutput(cfg)
+				if err != nil {
+					fyne.Do(func() {
+						appendLog(logOutput, fmt.Sprintf("[%d/%d] %s 准备失败：%s", i+1, total, filepath.Base(input), err))
+					})
+					cleanup()
+					continue
+				}
+				cfg.workOutput = workOutput
+
+				args := buildFFmpegArgs(cfg)
+				err = runFFmpeg(ctx, args, func(line string) {
+					appendLog(logOutput, line)
+				})
+				cleanup()
+
+				if err != nil {
+					fyne.Do(func() {
+						appendLog(logOutput, fmt.Sprintf("[%d/%d] %s 转换失败：%s", i+1, total, filepath.Base(input), err))
+					})
+					continue
+				}
+
+				if err := finalizeOutput(cfg); err != nil {
+					fyne.Do(func() {
+						appendLog(logOutput, fmt.Sprintf("[%d/%d] %s 保存失败：%s", i+1, total, filepath.Base(input), err))
+					})
+					continue
+				}
+
+				fyne.Do(func() {
+					appendLog(logOutput, fmt.Sprintf("[%d/%d] ✓ %s", i+1, total, filepath.Base(output)))
+				})
+			}
 
 			cancelMu.Lock()
 			cancelRun = nil
 			cancelMu.Unlock()
-
 			fyne.Do(func() {
 				convertButton.Enable()
 				cancelButton.Disable()
+				statusLabel.SetText("转换完成")
 			})
-
-			if errors.Is(ctx.Err(), context.Canceled) {
-				setStatus(statusLabel, "已停止")
-				return
-			}
-			if err != nil {
-				setStatus(statusLabel, "转换失败："+err.Error())
-				return
-			}
-			if err := finalizeOutput(current); err != nil {
-				var warning *finalizeWarning
-				if errors.As(err, &warning) {
-					setStatus(statusLabel, "转换完成，但"+warning.Error())
-					return
-				}
-				setStatus(statusLabel, "保存失败："+err.Error())
-				return
-			}
-			setStatus(statusLabel, "转换完成："+filepath.Base(current.output))
 		}()
+	}
+
+	clearAllBtn = widget.NewButtonWithIcon("清空", icon(fas.Stop), func() {
+		imagePaths = nil
+		refreshImageChips()
+		refreshOutput()
+		refreshDropHint()
+		statusLabel.SetText("就绪")
+	})
+	clearAllBtn.Importance = widget.LowImportance
+	clearAllBtn.Hide()
+
+	refreshImageChips = func() {
+		imageChips.RemoveAll()
+		if len(imagePaths) == 0 {
+			imageChipsScroll.Hide()
+			clearAllBtn.Hide()
+			return
+		}
+		imageChipsScroll.Show()
+		clearAllBtn.Show()
+		for idx, path := range imagePaths {
+			i, p := idx, path
+			name := filepath.Base(p)
+			removeBtn := widget.NewButton("×", func() {
+				imagePaths = append(imagePaths[:i], imagePaths[i+1:]...)
+				refreshImageChips()
+				refreshOutput()
+				refreshDropHint()
+				if len(imagePaths) == 0 {
+					statusLabel.SetText("就绪")
+				}
+			})
+			removeBtn.Importance = widget.LowImportance
+			chip := container.NewHBox(
+				widget.NewLabel(name),
+				removeBtn,
+			)
+			imageChips.Add(chip)
+		}
+		imageChips.Refresh()
 	}
 
 	title := widget.NewLabelWithStyle("HexImg", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
@@ -302,10 +408,44 @@ func main() {
 	})
 	themeButton.Importance = widget.LowImportance
 
-	header := container.NewBorder(nil, nil, nil, themeButton, container.NewVBox(title, subtitle))
+	// Square rounded rectangle for the theme toggle
+	themeButtonContainer := container.NewGridWrap(fyne.NewSize(36, 36), themeButton)
+
+	header := container.NewBorder(nil, nil, nil, nil,
+		container.NewHBox(
+			container.NewVBox(title, subtitle),
+			layout.NewSpacer(),
+			themeButtonContainer,
+		),
+	)
+
+	// Accept dragged-in image files (append to existing, no duplicates)
+	win.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
+		existingSet := make(map[string]bool, len(imagePaths))
+		for _, p := range imagePaths {
+			existingSet[p] = true
+		}
+		var added int
+		for _, uri := range uris {
+			path := uri.Path()
+			if isImageFile(path) && !existingSet[path] {
+				imagePaths = append(imagePaths, path)
+				existingSet[path] = true
+				added++
+			}
+		}
+		if added > 0 {
+			refreshImageChips()
+			refreshOutput()
+			refreshDropHint()
+			statusLabel.SetText(fmt.Sprintf("已选择 %d 张图片", len(imagePaths)))
+		}
+	})
 	sourceCard := widget.NewCard("图片", "", container.NewVBox(
 		widget.NewLabel("输入图片"),
-		container.NewBorder(nil, nil, nil, openInputButton, selectedPath),
+		imageChipsScroll,
+		container.NewBorder(nil, nil, openInputButton, clearAllBtn),
+		dropHint,
 		widget.NewLabel("输出文件"),
 		outputPath,
 	))
@@ -336,6 +476,7 @@ func main() {
 	refreshOutput()
 	refreshQualityControl(formatSelect.Selected)
 	refreshOutputMode(outputModeSelect.Selected)
+	refreshDropHint()
 	win.ShowAndRun()
 }
 
@@ -647,4 +788,12 @@ func setStatus(label *widget.Label, text string) {
 	fyne.Do(func() {
 		label.SetText(text)
 	})
+}
+
+func isImageFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif":
+		return true
+	}
+	return false
 }

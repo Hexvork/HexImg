@@ -10,22 +10,31 @@ import (
 	"fyne.io/fyne/v2/storage"
 )
 
-func chooseImageFile(win fyne.Window, selected func(string, error)) {
+func chooseImageFile(win fyne.Window, selected func([]string, error)) {
+	chooseImageFileInDirectory(win, "", selected)
+}
+
+func chooseImageFileInDirectory(win fyne.Window, dir string, selected func([]string, error)) {
 	fileDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
 		if err != nil {
-			selected("", err)
+			selected(nil, err)
 			return
 		}
 		if reader == nil {
-			selected("", nil)
+			selected(nil, nil)
 			return
 		}
 		defer reader.Close()
-		selected(reader.URI().Path(), nil)
+		selected([]string{reader.URI().Path()}, nil)
 	}, win)
 	fileDialog.SetFilter(storage.NewExtensionFileFilter([]string{
-		".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif",
+		".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif", ".bmp", ".tif", ".tiff", ".ico", ".svg",
 	}))
+	if dir != "" {
+		if listable, err := storage.ListerForURI(storage.NewFileURI(dir)); err == nil {
+			fileDialog.SetLocation(listable)
+		}
+	}
 	fileDialog.Show()
 }
 
