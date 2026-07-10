@@ -7,12 +7,18 @@ build/
 *.test
 coverage.out
 
-# Go workspace/cache files
-go.work
-go.work.sum
-
 # OS/editor noise
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+/build/
+/.toolchain/
+/\.gradle/
+/gradle/
+/cmake-build-*/
+/CMakeUserPresets.json
+/dist/
+/exe/
+*.log
+*.tmp

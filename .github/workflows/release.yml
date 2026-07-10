@@ -4,12 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version, for example v0.1.0
+        description: Release version, for example 0.1.0
         required: true
-        default: v0.1.0
+        default: 0.1.0
   push:
-    tags:
-      - "v*"
     branches:
       - main
 
@@ -18,189 +16,67 @@ permissions:
 
 env:
   APP_NAME: HexImg
-  GO_VERSION: "1.24"
 
 jobs:
-  build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: windows-x64
-            runner: windows-latest
-            goos: windows
-            goarch: amd64
-            cc: gcc
-            cgo_cflags: ""
-            artifact_ext: .exe
-            windows_arch: x64
-            msystem: UCRT64
-            msys_packages: mingw-w64-ucrt-x86_64-gcc
-          - name: windows-arm64
-            runner: windows-11-arm
-            goos: windows
-            goarch: arm64
-            cc: clang
-            cgo_cflags: "-DWINBOOL=BOOL -Wno-strict-prototypes"
-            artifact_ext: .exe
-            windows_arch: arm64
-            msystem: CLANGARM64
-            msys_packages: mingw-w64-clang-aarch64-clang
-          - name: macos-apple-silicon
-            runner: macos-14
-            goos: darwin
-            goarch: arm64
-            artifact_ext: ""
-          - name: macos-intel
-            runner: macos-14
-            goos: darwin
-            goarch: amd64
-            artifact_ext: ""
-          - name: linux-x86_64
-            runner: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            artifact_ext: ""
-          - name: linux-arm64
-            runner: ubuntu-24.04-arm
-            goos: linux
-            goarch: arm64
-            artifact_ext: ""
+  windows:
+    name: windows-x64
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Setup MSYS2 for Windows CGO
-        if: runner.os == 'Windows'
+      - name: Setup MSYS2 HEIC toolchain
         uses: msys2/setup-msys2@v2
         with:
-          msystem: ${{ matrix.msystem }}
+          msystem: UCRT64
           update: true
-          install: ${{ matrix.msys_packages }}
-          path-type: inherit
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-kvazaar
+            mingw-w64-ucrt-x86_64-libpng
 
-      - name: Install Linux GUI dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev
+      - name: Setup Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
 
       - name: Resolve version
         id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Download modules
-        run: go mod download
-
-      - name: Build Windows binary
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        env:
-          CGO_ENABLED: "1"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CC: ${{ matrix.cc }}
-          CGO_CFLAGS: ${{ matrix.cgo_cflags }}
-        run: |
-          mkdir -p dist
-
-          if [ "${{ matrix.name }}" = "windows-arm64" ]; then
-            export CGO_LDFLAGS="-L${MINGW_PREFIX}/lib"
-          fi
-
-          go build -buildvcs=false -trimpath -ldflags "-s -w -H=windowsgui -X main.version=${{ steps.version.outputs.value }}" -o "dist/${APP_NAME}-${{ matrix.name }}${{ matrix.artifact_ext }}" ./cmd/heximg
-
-      - name: Build binary
-        if: runner.os != 'Windows'
-        shell: bash
-        env:
-          CGO_ENABLED: "1"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CC: ${{ matrix.cc }}
-          CGO_CFLAGS: ${{ matrix.cgo_cflags }}
-        run: |
-          mkdir -p dist
-          go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=${{ steps.version.outputs.value }}" -o "dist/${APP_NAME}-${{ matrix.name }}${{ matrix.artifact_ext }}" ./cmd/heximg
-
-      - name: Package Windows installer
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install innosetup --no-progress -y
-          $sourceDir = Join-Path $PWD "dist\windows-${{ matrix.windows_arch }}"
-          New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
-          Copy-Item "dist\${{ env.APP_NAME }}-${{ matrix.name }}.exe" (Join-Path $sourceDir "${{ env.APP_NAME }}.exe")
-          $version = "${{ steps.version.outputs.value }}".TrimStart("v")
-          iscc "/DAppVersion=$version" "/DAppArch=${{ matrix.windows_arch }}" "/DSourceDir=$sourceDir" "/DOutputDir=$PWD\dist" "packaging\windows\HexImg.iss"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "value=${{ inputs.version }}" >> $env:GITHUB_OUTPUT
+          } else {
+            "value=0.0.${{ github.run_number }}" >> $env:GITHUB_OUTPUT
+          }
 
-      - name: Package macOS app bundle
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          bundle_version="${{ steps.version.outputs.value }}"
-          bundle_version="${bundle_version#v}"
-          app_dir="dist/${APP_NAME}.app"
-          mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
-          cp "dist/${APP_NAME}-${{ matrix.name }}" "$app_dir/Contents/MacOS/${APP_NAME}"
-          chmod +x "$app_dir/Contents/MacOS/${APP_NAME}"
-          cat > "$app_dir/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleExecutable</key><string>${APP_NAME}</string>
-            <key>CFBundleIdentifier</key><string>com.hexvork.heximg</string>
-            <key>CFBundleName</key><string>${APP_NAME}</string>
-            <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
-            <key>CFBundleVersion</key><string>${bundle_version}</string>
-            <key>CFBundleShortVersionString</key><string>${bundle_version}</string>
-            <key>LSMinimumSystemVersion</key><string>11.0</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          PLIST
-          tar -czf "dist/${APP_NAME}-${{ matrix.name }}.app.tar.gz" -C dist "${APP_NAME}.app"
-
-      - name: Package Linux tarball
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          chmod +x "dist/${APP_NAME}-${{ matrix.name }}"
-          tar -czf "dist/${APP_NAME}-${{ matrix.name }}.tar.gz" -C dist "${APP_NAME}-${{ matrix.name }}"
+      - name: Package Windows installer
+        shell: pwsh
+        run: .\scripts\package-windows.ps1 -Version "${{ steps.version.outputs.value }}" -Arch x64
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
+          name: windows-x64
           path: |
-            dist/*.exe
-            dist/*-setup.exe
-            dist/*.tar.gz
+            exe/*-setup.exe
           if-no-files-found: error
 
   release:
     name: Publish GitHub Release
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    needs: build
+    needs: windows
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -212,16 +88,12 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
+          echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.value }}
+          tag_name: v${{ steps.version.outputs.value }}
           name: HexImg ${{ steps.version.outputs.value }}
           files: dist/*
           generate_release_notes: true

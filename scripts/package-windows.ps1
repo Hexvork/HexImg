@@ -1,80 +1,95 @@
 param(
     [string]$Version = "0.1.0",
-    [ValidateSet("x64", "arm64")]
+    [ValidateSet("x64")]
     [string]$Arch = "x64"
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$distDir = Join-Path $repoRoot "dist\windows-$Arch"
-New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+$exeDir = Join-Path $repoRoot "exe"
+$buildDir = Join-Path $repoRoot "build\qt-release"
+$deployDir = Join-Path $buildDir "deploy"
+New-Item -ItemType Directory -Force -Path $exeDir | Out-Null
+& (Join-Path $PSScriptRoot "create-app-icon.ps1")
 
-if ($Arch -eq "x64") {
-    $goArch = "amd64"
-    $defaultCC = "gcc"
-    $compilerCandidates = @(
-        "C:\msys64\ucrt64\bin\gcc.exe",
-        "C:\msys64\mingw64\bin\gcc.exe"
-    )
-} else {
-    $goArch = "arm64"
-    $defaultCC = "clang"
-    $compilerCandidates = @(
-        "C:\msys64\clangarm64\bin\clang.exe"
-    )
+$cmake = Get-Command cmake -ErrorAction SilentlyContinue
+if (-not $cmake) {
+    throw "cmake was not found. Install CMake 3.21 or newer."
 }
 
-$env:CGO_ENABLED = "1"
-$env:GOOS = "windows"
-$env:GOARCH = $goArch
-$env:CC = $defaultCC
-
-if (-not (Get-Command $env:CC -ErrorAction SilentlyContinue)) {
-    foreach ($candidate in $compilerCandidates) {
-        if (Test-Path $candidate) {
-            $compilerDir = Split-Path -Parent $candidate
-            $env:PATH = "$compilerDir;$env:PATH"
-            break
-        }
+$qtPrefix = $env:QT_ROOT_DIR
+if (-not $qtPrefix) {
+    $qtCommand = Get-Command qtpaths6 -ErrorAction SilentlyContinue
+    if (-not $qtCommand) { $qtCommand = Get-Command qtpaths -ErrorAction SilentlyContinue }
+    if ($qtCommand) {
+        $qtPrefix = (& $qtCommand.Source --install-prefix).Trim()
     }
 }
 
-if ($Arch -eq "arm64") {
-    $env:CGO_CFLAGS = "-DWINBOOL=BOOL -Wno-strict-prototypes"
-    if (Test-Path "C:\msys64\clangarm64\lib") {
-        $env:CGO_LDFLAGS = "-LC:\msys64\clangarm64\lib"
-    }
+if (-not $qtPrefix) {
+    throw "Qt 6 was not found. Set QT_ROOT_DIR or add qtpaths to PATH."
 }
 
-if (-not (Get-Command $env:CC -ErrorAction SilentlyContinue)) {
-    throw "Missing $($env:CC). Install the C compiler for Windows $Arch and add it to PATH."
-}
+& $cmake.Source -S $repoRoot -B $buildDir -DCMAKE_BUILD_TYPE=Release "-DCMAKE_PREFIX_PATH=$qtPrefix"
+if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
 
-try {
-    & $env:CC --version | Out-Null
-} catch {
-    throw "$($env:CC) is not executable on this host. Install a compiler that can run here for Windows $Arch."
-}
+& $cmake.Source --build $buildDir --config Release --parallel
+if ($LASTEXITCODE -ne 0) { throw "Qt build failed." }
 
-$ldflags = "-s -w -H=windowsgui -X main.version=$Version"
-$goArgs = @(
-    "build",
-    "-trimpath",
-    "-ldflags",
-    $ldflags,
-    "-o",
-    (Join-Path $distDir "HexImg.exe"),
-    "./cmd/heximg"
+$binaryCandidates = @(
+    (Join-Path $buildDir "Release\HexImg.exe"),
+    (Join-Path $buildDir "HexImg.exe")
 )
-& go @goArgs
+$binary = $binaryCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $binary) {
+    throw "Qt executable was not found in $buildDir"
+}
+
+$binaryDir = Split-Path -Parent $binary
+$heifToolsDir = Join-Path $binaryDir "tools\heif"
+& (Join-Path $PSScriptRoot "build-heif-tools.ps1") -OutputDir $heifToolsDir -WorkDir (Join-Path $buildDir "heif-tools")
+
+$ctestPath = Join-Path (Split-Path -Parent $cmake.Source) "ctest.exe"
+if (-not (Test-Path $ctestPath)) { throw "ctest was not found next to cmake." }
+& $ctestPath --test-dir $buildDir --build-config Release --output-on-failure
+if ($LASTEXITCODE -ne 0) { throw "Qt tests failed." }
+
+New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
+Copy-Item $binary (Join-Path $deployDir "HexImg.exe") -Force
+$deployedHeifDir = Join-Path $deployDir "tools\heif"
+New-Item -ItemType Directory -Force -Path $deployedHeifDir | Out-Null
+Copy-Item -Path (Join-Path $heifToolsDir "*") -Destination $deployedHeifDir -Recurse -Force
+
+$windeployqtPath = $null
+$windeployqt = Get-Command windeployqt6 -ErrorAction SilentlyContinue
+if (-not $windeployqt) { $windeployqt = Get-Command windeployqt -ErrorAction SilentlyContinue }
+if ($windeployqt) {
+    $windeployqtPath = $windeployqt.Source
+}
+if (-not $windeployqtPath) {
+    $knownWindeployqt = Join-Path $qtPrefix "bin\windeployqt.exe"
+    if (Test-Path $knownWindeployqt) { $windeployqtPath = $knownWindeployqt }
+}
+if (-not $windeployqtPath) { throw "windeployqt was not found in the Qt installation." }
+
+& $windeployqtPath --release --no-translations --qmldir (Join-Path $repoRoot "qml") (Join-Path $deployDir "HexImg.exe")
+if ($LASTEXITCODE -ne 0) { throw "windeployqt failed." }
 
 $iscc = Get-Command iscc -ErrorAction SilentlyContinue
 if (-not $iscc) {
-    Write-Warning "Inno Setup iscc was not found. HexImg.exe was built, installer packaging skipped."
-    exit 0
+    $knownIscc = @(
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe"
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if (-not $knownIscc) {
+        throw "Inno Setup iscc was not found. Install Inno Setup 6 and retry."
+    }
+    $isccPath = $knownIscc
+} else {
+    $isccPath = $iscc.Source
 }
 
 $installer = Join-Path $repoRoot "packaging\windows\HexImg.iss"
-$outDir = Join-Path $repoRoot "dist"
-& $iscc.Source "/DAppVersion=$Version" "/DAppArch=$Arch" "/DSourceDir=$distDir" "/DOutputDir=$outDir" $installer
+& $isccPath "/DAppVersion=$Version" "/DAppArch=$Arch" "/DSourceDir=$deployDir" "/DOutputDir=$exeDir" $installer

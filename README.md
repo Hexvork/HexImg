@@ -1,56 +1,54 @@
 # HexImg
 
-HexImg 是一个使用 Go + Fyne 编写的原生图片格式转换工具。项目不使用 Electron 或其他 Web 套壳，界面配色采用 fluent dark/light 风格，并通过 `internal/fas` 调用 Font Awesome Solid 图标资源。
+HexImg 是一个基于 Qt 6 + QML 构建的原生图片格式转换工具，使用 FFmpeg 执行实际转换。界面支持批量选择、拖拽导入、实时日志、停止任务和深浅色主题。
 
 ## 功能
 
-- 原生 Fyne 桌面界面，支持深色/浅色主题。
-- Windows 下使用系统文件选择器，macOS/Linux 使用 Fyne 文件选择器。
-- 选择目标格式，使用 0-100 质量滑块控制输出质量。
-- 启动时检测 `ffmpeg`，转换时调用系统 `ffmpeg` 并输出运行日志。
-- GitHub Actions 自动构建并发布 release 产物。
+- 支持 JPG、PNG、WebP、AVIF、HEIC、GIF、ICO、SVG、BMP、TIFF 输出。
+- JPG/WebP 支持 0-100 质量控制，PNG 支持 0-9 压缩级别。
+- 支持添加后缀、输出到当前目录文件夹、替换源文件三种输出方式。
+- 批量处理图片，预览输出路径，并实时显示 FFmpeg 日志。
+- 使用 Qt Quick Controls 构建紧凑的 shadcn/ui 风格桌面界面。
+
+## 项目结构
+
+```text
+src/
+  main.cpp              # Qt 应用入口
+  heximgbackend.*       # QML 后端、队列和 FFmpeg 转换流程
+  queuemodel.*          # 图片队列模型
+qml/
+  Main.qml              # Qt Quick/QML 界面
+  Shad*.qml             # shadcn/ui 风格基础控件
+  FormatBadge.qml       # 队列格式标识
+packaging/windows/
+  HexImg.iss            # Inno Setup 安装脚本
+scripts/
+  package-windows.ps1   # CMake、windeployqt 和安装包构建
+```
 
 ## 本地运行
 
-需要先安装 Go、C 编译器和 FFmpeg，并确保 `ffmpeg` 在 `PATH` 中。
+需要安装 Qt 6.5+、CMake 3.21+、C++ 编译器、FFmpeg，并确保 `ffmpeg` 在 `PATH` 中。HEIC 输出还需要随程序部署 `tools\heif` 中的 libheif/Kvazaar 编码辅助程序。配置 `QT_ROOT_DIR` 指向 Qt 安装目录后运行：
 
 ```powershell
-go mod tidy
-go run ./cmd/heximg
+cmake -S . -B build -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+cmake --build build --config Release
+ctest --test-dir build --build-config Release --output-on-failure
 ```
 
-## 构建
+使用 `windeployqt` 部署后，可运行程序及 Qt 运行库应放在同一目录。本地交付文件位于 `exe\HexImg.exe`。
+
+## 构建 Windows 安装包
+
+需要额外安装 Inno Setup 6：
 
 ```powershell
-go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/HexImg.exe ./cmd/heximg
+.\scripts\package-windows.ps1 -Version 0.2.0 -Arch x64
 ```
 
-Windows 安装包可使用 Inno Setup：
+安装包输出到 `exe\HexImg-windows-x64-setup.exe`。
 
-```powershell
-.\scripts\package-windows.ps1 -Version 0.1.0 -Arch x64
-```
+## License
 
-脚本兼容 Windows PowerShell 5.1 和 PowerShell 7+。Windows x64 构建需要可执行的 `gcc`，Windows ARM64 构建需要可执行的 `clang`；如果使用 MSYS2，脚本会自动识别默认安装路径下的 UCRT64/CLANGARM64 编译器。
-
-## Release
-
-`.github/workflows/release.yml` 支持：
-
-- `workflow_dispatch` 手动输入版本号发布。
-- 推送 `v*` tag 自动发布。
-
-目标平台：
-
-- Windows x64
-- Windows ARM64
-- macOS Apple Silicon
-- macOS Intel
-- Linux x86_64
-- Linux ARM64
-
-Windows 产物包含原生安装 `.exe`，同时保留直接运行的二进制 `.exe`。
-
-## 图标授权
-
-界面图标路径数据来自 Font Awesome Free Solid，遵循 Font Awesome Free 授权条款。
+Qt 以 LGPL 版本使用时，请随发行包提供对应许可证和 Qt 版权信息。

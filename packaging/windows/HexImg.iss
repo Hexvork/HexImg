@@ -7,11 +7,11 @@
 #endif
 
 #ifndef SourceDir
-#define SourceDir "..\..\dist\windows"
+#define SourceDir "..\..\build\qt-release\deploy"
 #endif
 
 #ifndef OutputDir
-#define OutputDir "..\..\dist"
+#define OutputDir "..\..\exe"
 #endif
 
 [Setup]
@@ -30,15 +30,16 @@ OutputBaseFilename=HexImg-windows-{#AppArch}-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesAllowed=x64compatible arm64
-ArchitecturesInstallIn64BitMode=x64compatible arm64
+SetupIconFile={#SourcePath}\HexImg.ico
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\HexImg.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "{#SourceDir}\HexImg.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\HexImg"; Filename: "{app}\HexImg.exe"
