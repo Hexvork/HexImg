@@ -23,11 +23,10 @@ rm -rf "$build_dir" "$stage_dir"
 mkdir -p "$build_dir" "$stage_dir" "$dist_dir"
 
 cmake -S "$repo_root" -B "$build_dir" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/
+  -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build_dir" --parallel
 ctest --test-dir "$build_dir" --output-on-failure
-DESTDIR="$stage_dir" cmake --install "$build_dir" --config Release
+cmake --install "$build_dir" --config Release --prefix "$stage_dir"
 
 if [[ "$platform" == "macos" ]]; then
   app_path="$stage_dir/HexImg.app"

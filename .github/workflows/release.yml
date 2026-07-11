@@ -28,7 +28,7 @@ jobs:
           - arch: x64
             qt_arch: win64_msvc2022_64
           - arch: arm64
-            qt_arch: win64_msvc2022_arm64
+            qt_arch: win64_msvc2022_arm64_cross_compiled
 
     steps:
       - name: Checkout
