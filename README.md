@@ -29,7 +29,7 @@ scripts/
 
 ## 本地运行
 
-需要安装 Qt 6.5+、CMake 3.21+、C++ 编译器、FFmpeg，并确保 `ffmpeg` 在 `PATH` 中。HEIC 输出还需要随程序部署 `tools\heif` 中的 libheif/Kvazaar 编码辅助程序。配置 `QT_ROOT_DIR` 指向 Qt 安装目录后运行：
+需要安装 Qt 6.5+（Linux 最低支持 Qt 6.4）、CMake 3.21+、C++ 编译器、FFmpeg，并确保 `ffmpeg` 在 `PATH` 中。Windows x64 安装包内置 HEIC 编码器；Windows ARM64 使用系统 HEIF 图像扩展；macOS 和 Linux 需要安装提供 `heif-enc` 的 libheif。配置 `QT_ROOT_DIR` 指向 Qt 安装目录后运行：
 
 ```powershell
 cmake -S . -B build -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"

@@ -31,8 +31,13 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 SetupIconFile={#SourcePath}\HexImg.ico
+#if AppArch == "arm64"
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#else
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 UninstallDisplayIcon={app}\HexImg.exe
 
 [Languages]

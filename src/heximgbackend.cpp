@@ -512,8 +512,30 @@ bool HexImgBackend::writeSvgOutput(const QString &input, const QString &output, 
 
 bool HexImgBackend::writeHeicOutput(const QString &input, const QString &output, int quality, QString *error) const
 {
-    const QString helper = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("tools/heif/heif-enc.exe"));
-    if (QFileInfo::exists(helper)) {
+#ifdef Q_OS_WIN
+    const QString helperName = QStringLiteral("heif-enc.exe");
+#else
+    const QString helperName = QStringLiteral("heif-enc");
+#endif
+    QString helper = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("tools/heif/%1").arg(helperName));
+    if (!QFileInfo::exists(helper)) {
+        helper = QStandardPaths::findExecutable(helperName);
+    }
+#ifdef Q_OS_MACOS
+    if (helper.isEmpty()) {
+        const QStringList homebrewPaths = {
+            QStringLiteral("/opt/homebrew/bin/heif-enc"),
+            QStringLiteral("/usr/local/bin/heif-enc"),
+        };
+        for (const QString &candidate : homebrewPaths) {
+            if (QFileInfo(candidate).isExecutable()) {
+                helper = candidate;
+                break;
+            }
+        }
+    }
+#endif
+    if (!helper.isEmpty()) {
         QFile::remove(output);
         QProcess encoder;
         encoder.setProcessChannelMode(QProcess::MergedChannels);

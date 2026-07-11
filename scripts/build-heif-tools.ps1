@@ -3,7 +3,7 @@ param(
     [string]$OutputDir,
     [string]$WorkDir = "",
     [string]$Version = "1.23.1",
-    [string]$MsysRoot = "C:\msys64"
+    [string]$MsysRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,12 +13,46 @@ if (-not $WorkDir) {
     $WorkDir = Join-Path $repoRoot "build\heif-tools"
 }
 
+if (-not $MsysRoot) {
+    $candidates = @(
+        $env:MSYS2_ROOT,
+        $env:MSYS2_LOCATION,
+        "C:\msys64"
+    ) | Where-Object { $_ }
+
+    $pathCmake = Get-Command cmake.exe -All -ErrorAction SilentlyContinue |
+        Where-Object { $_.Source -match '[\\/]ucrt64[\\/]bin[\\/]cmake\.exe$' } |
+        Select-Object -First 1
+    if ($pathCmake) {
+        $candidates += Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $pathCmake.Source))
+    }
+
+    if ($env:RUNNER_TEMP -and (Test-Path $env:RUNNER_TEMP)) {
+        $runnerCmake = Get-ChildItem -Path $env:RUNNER_TEMP -Filter cmake.exe -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]ucrt64[\\/]bin[\\/]cmake\.exe$' } |
+            Select-Object -First 1
+        if ($runnerCmake) {
+            $candidates += Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $runnerCmake.FullName))
+        }
+    }
+
+    $MsysRoot = $candidates |
+        Where-Object { Test-Path (Join-Path $_ "ucrt64\bin\cmake.exe") } |
+        Select-Object -First 1
+}
+
+if (-not $MsysRoot) {
+    throw "MSYS2 UCRT64 was not found. Pass -MsysRoot or install the UCRT64 CMake and Ninja packages."
+}
+
+$MsysRoot = (Resolve-Path $MsysRoot).Path
 $ucrtRoot = Join-Path $MsysRoot "ucrt64"
 $cmake = Join-Path $ucrtRoot "bin\cmake.exe"
 $ninja = Join-Path $ucrtRoot "bin\ninja.exe"
 if (-not (Test-Path $cmake) -or -not (Test-Path $ninja)) {
     throw "MSYS2 UCRT64 CMake and Ninja are required to build HEIC tools."
 }
+Write-Host "Using MSYS2 from $MsysRoot"
 
 $sourceDir = Join-Path $WorkDir "source"
 $buildDir = Join-Path $WorkDir "build"

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=HexImg
+Comment=Batch image format converter
+Exec=HexImg
+Icon=com.hexvork.HexImg
+Categories=Graphics;Utility;
+Terminal=false
+

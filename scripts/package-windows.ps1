@@ -1,14 +1,15 @@
 param(
     [string]$Version = "0.1.0",
-    [ValidateSet("x64")]
-    [string]$Arch = "x64"
+    [ValidateSet("x64", "arm64")]
+    [string]$Arch = "x64",
+    [string]$MsysRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $exeDir = Join-Path $repoRoot "exe"
-$buildDir = Join-Path $repoRoot "build\qt-release"
+$buildDir = Join-Path $repoRoot "build\qt-release-$Arch"
 $deployDir = Join-Path $buildDir "deploy"
 New-Item -ItemType Directory -Force -Path $exeDir | Out-Null
 & (Join-Path $PSScriptRoot "create-app-icon.ps1")
@@ -31,7 +32,16 @@ if (-not $qtPrefix) {
     throw "Qt 6 was not found. Set QT_ROOT_DIR or add qtpaths to PATH."
 }
 
-& $cmake.Source -S $repoRoot -B $buildDir -DCMAKE_BUILD_TYPE=Release "-DCMAKE_PREFIX_PATH=$qtPrefix"
+$configureArgs = @(
+    "-S", $repoRoot,
+    "-B", $buildDir,
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DCMAKE_PREFIX_PATH=$qtPrefix"
+)
+if ($Arch -eq "arm64") {
+    $configureArgs += @("-A", "ARM64")
+}
+& $cmake.Source @configureArgs
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
 
 & $cmake.Source --build $buildDir --config Release --parallel
@@ -48,18 +58,30 @@ if (-not $binary) {
 
 $binaryDir = Split-Path -Parent $binary
 $heifToolsDir = Join-Path $binaryDir "tools\heif"
-& (Join-Path $PSScriptRoot "build-heif-tools.ps1") -OutputDir $heifToolsDir -WorkDir (Join-Path $buildDir "heif-tools")
+if ($Arch -eq "x64") {
+    $heifArgs = @{
+        OutputDir = $heifToolsDir
+        WorkDir = Join-Path $buildDir "heif-tools"
+    }
+    if ($MsysRoot) { $heifArgs.MsysRoot = $MsysRoot }
+    & (Join-Path $PSScriptRoot "build-heif-tools.ps1") @heifArgs
+}
 
-$ctestPath = Join-Path (Split-Path -Parent $cmake.Source) "ctest.exe"
-if (-not (Test-Path $ctestPath)) { throw "ctest was not found next to cmake." }
-& $ctestPath --test-dir $buildDir --build-config Release --output-on-failure
-if ($LASTEXITCODE -ne 0) { throw "Qt tests failed." }
+$canRunTarget = $Arch -eq "x64" -or $env:PROCESSOR_ARCHITECTURE -eq "ARM64"
+if ($canRunTarget) {
+    $ctestPath = Join-Path (Split-Path -Parent $cmake.Source) "ctest.exe"
+    if (-not (Test-Path $ctestPath)) { throw "ctest was not found next to cmake." }
+    & $ctestPath --test-dir $buildDir --build-config Release --output-on-failure
+    if ($LASTEXITCODE -ne 0) { throw "Qt tests failed." }
+}
 
 New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
 Copy-Item $binary (Join-Path $deployDir "HexImg.exe") -Force
-$deployedHeifDir = Join-Path $deployDir "tools\heif"
-New-Item -ItemType Directory -Force -Path $deployedHeifDir | Out-Null
-Copy-Item -Path (Join-Path $heifToolsDir "*") -Destination $deployedHeifDir -Recurse -Force
+if (Test-Path $heifToolsDir) {
+    $deployedHeifDir = Join-Path $deployDir "tools\heif"
+    New-Item -ItemType Directory -Force -Path $deployedHeifDir | Out-Null
+    Copy-Item -Path (Join-Path $heifToolsDir "*") -Destination $deployedHeifDir -Recurse -Force
+}
 
 $windeployqtPath = $null
 $windeployqt = Get-Command windeployqt6 -ErrorAction SilentlyContinue
