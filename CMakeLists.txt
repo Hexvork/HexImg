@@ -64,10 +64,14 @@ if(APPLE)
     )
 endif()
 
-install(TARGETS HexImg
-    BUNDLE DESTINATION .
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+if(WIN32)
+    install(TARGETS HexImg RUNTIME DESTINATION .)
+else()
+    install(TARGETS HexImg
+        BUNDLE DESTINATION .
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
 
 if(UNIX AND NOT APPLE)
     install(FILES packaging/linux/com.hexvork.HexImg.desktop
@@ -77,7 +81,7 @@ if(UNIX AND NOT APPLE)
         RENAME com.hexvork.HexImg.png)
 endif()
 
-if(APPLE OR (UNIX AND NOT ANDROID AND Qt6_VERSION VERSION_GREATER_EQUAL 6.5))
+if(WIN32 OR APPLE OR (UNIX AND NOT ANDROID AND Qt6_VERSION VERSION_GREATER_EQUAL 6.5))
     qt_generate_deploy_qml_app_script(
         TARGET HexImg
         OUTPUT_SCRIPT deployScript
